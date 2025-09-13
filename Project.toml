@@ -1,0 +1,12 @@
+name = "CopernicusMarine"
+uuid = "cd43e856-93a3-40c8-bc9e-6146cdce14fa"
+authors = ["Gregory Wagner <wagner.greg@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
+PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
+
+[compat]
+CondaPkg = "0.2.31"
+PythonCall = "0.9.27"
