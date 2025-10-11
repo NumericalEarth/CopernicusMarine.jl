@@ -14,5 +14,5 @@ CopernicusMarine.jl provides a Julia interface to the [copernicusmarine](https:/
 
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/NumericalEarth/CopernicusMarine.jl")
+Pkg.add(CopernicusMarine)
 ```
