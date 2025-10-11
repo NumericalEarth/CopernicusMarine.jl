@@ -3,7 +3,7 @@
 Julia wrapper for the python package [copernicusmarine](https://github.com/mercator-ocean/copernicus-marine-toolbox).
 
 <a href="https://github.com/NumericalEarth/CopernicusMarine.jl/actions">
-  <img alt="CI" src="https://github.com/NumericalEarth/XESMF.jl/actions/workflows/CI.yml/badge.svg">
+  <img alt="CI" src="https://github.com/NumericalEarth/CopernicusMarine.jl/actions/workflows/CI.yml/badge.svg">
 </a>
 
 ## Overview
