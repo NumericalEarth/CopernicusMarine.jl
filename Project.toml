@@ -1,6 +1,6 @@
 name = "CopernicusMarine"
 uuid = "cd43e856-93a3-40c8-bc9e-6146cdce14fa"
-authors = ["Gregory Wagner <wagner.greg@gmail.com>"]
+authors = ["NumericalEarth and contributors"]
 version = "0.1.0"
 
 [deps]
@@ -10,3 +10,9 @@ PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
 [compat]
 CondaPkg = "0.2.31"
 PythonCall = "0.9.27"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
