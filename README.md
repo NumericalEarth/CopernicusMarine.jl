@@ -16,3 +16,14 @@ CopernicusMarine.jl provides a Julia interface to the [copernicusmarine](https:/
 using Pkg
 Pkg.add(CopernicusMarine)
 ```
+
+## Usage
+
+By importing the package you have access to the python package via:
+
+```julia
+julia> using CopernicusMarine
+
+julia> CopernicusMarine.copernicusmarine
+Python: <module 'copernicusmarine' from '/Users/arandomuser/CopernicusMarine.jl/.CondaPkg/.pixi/envs/default/lib/python3.13/site-packages/copernicusmarine/__init__.py'>
+```
