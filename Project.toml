@@ -1,7 +1,7 @@
 name = "CopernicusMarine"
 uuid = "cd43e856-93a3-40c8-bc9e-6146cdce14fa"
 authors = ["NumericalEarth and contributors"]
-version = "0.1.0"
+version = "0.1.1"
 
 [deps]
 CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"

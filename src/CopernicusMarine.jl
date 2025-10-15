@@ -3,6 +3,8 @@ module CopernicusMarine
 using CondaPkg
 using PythonCall
 
+export pylist
+
 """
     install_copernicusmarine()
 
