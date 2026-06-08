@@ -2,9 +2,6 @@
 [deps.copernicusmarine]
 channel = "conda-forge"
 
-# `copernicusmarine` writes subsetted data with `xarray.to_netcdf`, which needs a
-# netCDF writer backend at run time. The conda package does not hard-depend on one,
-# so without these a download fails with `ImportError: No module named 'h5py'`.
 [deps.h5py]
 channel = "conda-forge"
 
