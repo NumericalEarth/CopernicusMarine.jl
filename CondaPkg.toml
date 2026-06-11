@@ -1,3 +1,9 @@
 
 [deps.copernicusmarine]
 channel = "conda-forge"
+
+[deps.h5py]
+channel = "conda-forge"
+
+[deps.netcdf4]
+channel = "conda-forge"
