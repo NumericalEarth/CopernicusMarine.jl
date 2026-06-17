@@ -56,7 +56,13 @@ const CM = CopernicusMarine
             @test name == (Sys.ARCH === :aarch64 ? "copernicusmarine_macos-arm64.cli" :
                                                     "copernicusmarine_macos-x86_64.cli")
         elseif Sys.islinux()
-            @test name == "copernicusmarine_linux-glibc-2.35.cli"
+            glibc = CM.glibc_version()
+            expected = (glibc !== nothing && glibc >= v"2.39") ?
+                       "copernicusmarine_linux-glibc-2.39.cli" :
+                       "copernicusmarine_linux-glibc-2.35.cli"
+            @test name == expected
+            # glibc_version parses to a VersionNumber on Linux
+            @test glibc === nothing || glibc isa VersionNumber
         end
 
         url = CM.asset_url()

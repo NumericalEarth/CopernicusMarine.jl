@@ -16,14 +16,34 @@ const TOOLBOX_VERSION = "2.4.1"
 const SCRATCH = Ref{String}()
 
 """
+    glibc_version()
+
+Return the host's glibc version as a `VersionNumber` on Linux, or `nothing` if it
+cannot be determined (or off Linux).
+
+The standalone executable is a PyInstaller bundle that ships its own copy of the
+glibc NSS/resolver libraries. When the bundled glibc is older than the host's,
+DNS resolution inside the binary can fail, so we use this to pick the matching
+build rather than assuming forward compatibility.
+"""
+function glibc_version()
+    Sys.islinux() || return nothing
+    try
+        return VersionNumber(unsafe_string(ccall(:gnu_get_libc_version, Cstring, ())))
+    catch
+        return nothing
+    end
+end
+
+"""
     asset_name()
 
 Return the file name of the standalone `copernicusmarine` executable published on
 the GitHub releases page for the current platform. Throws if the platform is not
 supported.
 
-The Linux build is the `glibc-2.35` variant, which is forward compatible with
-newer glibc versions.
+On Linux, the build matching the host's glibc is chosen: the `glibc-2.39` variant
+when glibc ≥ 2.39, otherwise the `glibc-2.35` variant.
 """
 function asset_name()
     if Sys.iswindows()
@@ -32,7 +52,12 @@ function asset_name()
         return Sys.ARCH === :aarch64 ? "copernicusmarine_macos-arm64.cli" :
                                        "copernicusmarine_macos-x86_64.cli"
     elseif Sys.islinux()
-        return "copernicusmarine_linux-glibc-2.35.cli"
+        glibc = glibc_version()
+        if glibc !== nothing && glibc >= v"2.39"
+            return "copernicusmarine_linux-glibc-2.39.cli"
+        else
+            return "copernicusmarine_linux-glibc-2.35.cli"
+        end
     else
         error("CopernicusMarine.jl does not support $(Sys.MACHINE): no standalone " *
               "`copernicusmarine` executable is published for this platform.")
