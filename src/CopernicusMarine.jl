@@ -1,212 +1,71 @@
 module CopernicusMarine
 
-using Scratch: @get_scratch!
-using Downloads: Downloads
-using JSON3: JSON3
-
 export subset, describe, login
 
-"""
-The version of the Copernicus Marine Toolbox standalone executable that this
-package downloads and drives. See https://github.com/mercator-ocean/copernicus-marine-toolbox/releases.
-"""
-const TOOLBOX_VERSION = "2.4.1"
+using DocStringExtensions: TYPEDSIGNATURES
 
-# Populated by `__init__` with the directory holding the downloaded executable.
-const SCRATCH = Ref{String}()
+include("executable.jl")   # binary management + _has_executable() + _subset_via_executable
+include("zarr_backend.jl") # pure Julia Zarr path + _subset_via_zarr
 
 """
-    glibc_version()
+$TYPEDSIGNATURES
 
-Return the host's glibc version as a `VersionNumber` on Linux, or `nothing` if it
-cannot be determined (or off Linux).
+Download a subset of a CMEMS dataset as a NetCDF file.
 
-The standalone executable is a PyInstaller bundle that ships its own copy of the
-glibc NSS/resolver libraries. When the bundled glibc is older than the host's,
-DNS resolution inside the binary can fail, so we use this to pick the matching
-build rather than assuming forward compatibility.
+When a `copernicusmarine` executable is available (either on `PATH` or
+auto-downloaded), it is used directly. On platforms where the binary is not
+supported (e.g. ARM64 Linux), the request is served by a pure Julia Zarr
+client instead.
+
+# Keyword arguments
+
+- `dataset_id` — CMEMS dataset identifier.
+- `variable` / `variables` — single variable name or a vector of names.
+- `username`, `password` — CMEMS credentials.
+  Defaults to `COPERNICUS_USERNAME`/`COPERNICUSMARINE_SERVICE_USERNAME` and
+  `COPERNICUS_PASSWORD`/`COPERNICUSMARINE_SERVICE_PASSWORD` environment variables.
+- `output_directory`, `output_filename` — where to write the output NetCDF.
+- `minimum_longitude`, `maximum_longitude` — longitude range (°E).
+- `minimum_latitude`, `maximum_latitude` — latitude range (°N).
+- `minimum_depth`, `maximum_depth` — depth range (m, positive down). `nothing` = full column.
+- `start_datetime`, `end_datetime` — ISO-8601 strings, e.g. `"2020-01-01T00:00:00"`.
+- `skip_existing` — skip download if the output file already exists (default `true`).
+- `coordinates_selection_method` — `"outside"` (default) or `"inside"`.
 """
-function glibc_version()
-    Sys.islinux() || return nothing
-    try
-        return VersionNumber(unsafe_string(ccall(:gnu_get_libc_version, Cstring, ())))
-    catch
-        return nothing
-    end
-end
-
-"""
-    asset_name()
-
-Return the file name of the standalone `copernicusmarine` executable published on
-the GitHub releases page for the current platform. Throws if the platform is not
-supported.
-
-On Linux, the build matching the host's glibc is chosen: the `glibc-2.39` variant
-when glibc ≥ 2.39, otherwise the `glibc-2.35` variant.
-"""
-function asset_name()
-    if Sys.iswindows()
-        return "copernicusmarine.exe"
-    elseif Sys.isapple()
-        return Sys.ARCH === :aarch64 ? "copernicusmarine_macos-arm64.cli" :
-                                       "copernicusmarine_macos-x86_64.cli"
-    elseif Sys.islinux()
-        glibc = glibc_version()
-        if glibc !== nothing && glibc >= v"2.39"
-            return "copernicusmarine_linux-glibc-2.39.cli"
-        else
-            return "copernicusmarine_linux-glibc-2.35.cli"
-        end
+function subset(;
+    dataset_id::String,
+    variable  = nothing,
+    variables = nothing,
+    username::String = get(ENV, "COPERNICUS_USERNAME",
+                       get(ENV, "COPERNICUSMARINE_SERVICE_USERNAME", "")),
+    password::String = get(ENV, "COPERNICUS_PASSWORD",
+                       get(ENV, "COPERNICUSMARINE_SERVICE_PASSWORD", "")),
+    output_directory::String,
+    output_filename::String,
+    minimum_longitude::Real,
+    maximum_longitude::Real,
+    minimum_latitude::Real,
+    maximum_latitude::Real,
+    minimum_depth::Union{Real,Nothing} = nothing,
+    maximum_depth::Union{Real,Nothing} = nothing,
+    start_datetime::Union{String,Nothing} = nothing,
+    end_datetime::Union{String,Nothing}   = nothing,
+    skip_existing::Bool = true,
+    coordinates_selection_method::String  = "outside",
+    kwargs...
+)
+    kw = (; dataset_id, variable, variables, username, password,
+            output_directory, output_filename,
+            minimum_longitude, maximum_longitude,
+            minimum_latitude, maximum_latitude,
+            minimum_depth, maximum_depth,
+            start_datetime, end_datetime,
+            skip_existing, coordinates_selection_method, kwargs...)
+    if _has_executable()
+        return _subset_via_executable(; kw...)
     else
-        error("CopernicusMarine.jl does not support $(Sys.MACHINE): no standalone " *
-              "`copernicusmarine` executable is published for this platform.")
+        return _subset_via_zarr(; kw...)
     end
-end
-
-"""
-    asset_url(version=TOOLBOX_VERSION)
-
-Return the GitHub releases download URL for the standalone executable matching the
-current platform and `version`.
-"""
-asset_url(version=TOOLBOX_VERSION) =
-    "https://github.com/mercator-ocean/copernicus-marine-toolbox/releases/download/v$(version)/$(asset_name())"
-
-# Local file name for the downloaded executable.
-_executable_path() = joinpath(SCRATCH[], Sys.iswindows() ? "copernicusmarine.exe" : "copernicusmarine")
-
-"""
-    executable(; force=false)
-
-Return the path to the standalone `copernicusmarine` executable, downloading it
-into a scratch directory on first use. Pass `force=true` to re-download.
-"""
-function executable(; force::Bool=false)
-    exe = _executable_path()
-
-    if force || !isfile(exe)
-        url = asset_url()
-        @info "Downloading the copernicusmarine v$(TOOLBOX_VERSION) executable from $(url) ..."
-        Downloads.download(url, exe)
-
-        if !Sys.iswindows()
-            chmod(exe, 0o755)
-        end
-
-        # Downloaded executables can be quarantined by macOS Gatekeeper, which
-        # prevents them from running. Strip the attribute if present.
-        if Sys.isapple()
-            try
-                run(pipeline(`xattr -d com.apple.quarantine $exe`; stderr=devnull))
-            catch
-                # No quarantine attribute set, or `xattr` unavailable; ignore.
-            end
-        end
-
-        @info "... copernicusmarine has been installed at $(exe)."
-    end
-
-    return exe
-end
-
-"""
-    cli_arguments(kwargs)
-
-Translate a collection of keyword pairs into a vector of command-line arguments.
-
-- Underscores in keys become dashes: `output_directory` -> `--output-directory`.
-- `true` becomes a bare flag; `false` and `nothing` are omitted.
-- A vector value repeats the flag once per element, matching repeatable options
-  such as `--variable`.
-- Any other value is appended as a stringified argument.
-"""
-function cli_arguments(kwargs)
-    args = String[]
-    for (key, value) in kwargs
-        flag = "--" * replace(string(key), "_" => "-")
-        if value === true
-            push!(args, flag)
-        elseif value === false || value === nothing
-            continue
-        elseif value isa AbstractVector
-            for element in value
-                push!(args, flag, string(element))
-            end
-        else
-            push!(args, flag, string(value))
-        end
-    end
-    return args
-end
-
-"""
-    command(subcommand, kwargs)
-
-Build the `Cmd` that invokes `copernicusmarine <subcommand>` with `kwargs`
-translated to command-line options by [`cli_arguments`](@ref).
-"""
-command(subcommand::AbstractString, kwargs) =
-    `$(executable()) $subcommand $(cli_arguments(kwargs))`
-
-"""
-    login(; kwargs...)
-
-Run `copernicusmarine login` to store Copernicus Marine credentials. Pass
-`username` and `password` to log in non-interactively, e.g.
-
-```julia
-login(username="me", password="secret")
-```
-
-Credentials may instead be supplied through the `COPERNICUSMARINE_SERVICE_USERNAME`
-and `COPERNICUSMARINE_SERVICE_PASSWORD` environment variables, in which case the
-other commands pick them up automatically and `login` is not required.
-"""
-login(; kwargs...) = run(command("login", kwargs))
-
-"""
-    subset(; kwargs...)
-
-Run `copernicusmarine subset` to download a subset of a dataset as a NetCDF file
-or Zarr store. Keyword arguments map to CLI options, e.g.
-
-```julia
-subset(dataset_id = "cmems_mod_ibi_bgc_anfc_0.027deg-3D_P1D-m",
-       variable = ["chl", "o2"],
-       minimum_longitude = -5, maximum_longitude = -3,
-       minimum_latitude = 43, maximum_latitude = 44,
-       start_datetime = "2023-09-01", end_datetime = "2023-09-30",
-       output_directory = "data")
-```
-"""
-subset(; kwargs...) = run(command("subset", kwargs))
-
-"""
-    get(; kwargs...)
-
-Run `copernicusmarine get` to download the original data files of a dataset, e.g.
-
-```julia
-CopernicusMarine.get(dataset_id = "cmems_mod_ibi_bgc_anfc_0.027deg-3D_P1D-m",
-                     filter = "*20241221*",
-                     output_directory = "data")
-```
-
-`get` is not exported because it would clash with `Base.get`; call it as
-`CopernicusMarine.get`.
-"""
-get(; kwargs...) = run(command("get", kwargs))
-
-"""
-    describe(; kwargs...)
-
-Run `copernicusmarine describe` and return the catalogue as a parsed JSON object.
-Keyword arguments filter the catalogue, e.g. `describe(contains="Global Ocean")`.
-"""
-function describe(; kwargs...)
-    json = read(command("describe", kwargs), String)
-    return JSON3.read(json)
 end
 
 function __init__()
