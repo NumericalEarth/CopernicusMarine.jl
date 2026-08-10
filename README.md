@@ -8,7 +8,14 @@ Julia interface to the [Copernicus Marine Toolbox](https://github.com/mercator-o
 
 ## Overview
 
-CopernicusMarine.jl drives the standalone [`copernicusmarine`](https://github.com/mercator-ocean/copernicus-marine-toolbox) command-line executable. The required executable is a single, self-contained binary that is downloaded automatically on first use — there is **no Python, conda, or pip dependency**.
+CopernicusMarine.jl provides two download backends, selected automatically at runtime:
+
+| Platform | Backend |
+|---|---|
+| x86-64 Linux, macOS, Windows | Standalone [`copernicusmarine`](https://github.com/mercator-ocean/copernicus-marine-toolbox) executable, downloaded automatically on first use — no Python or conda required |
+| ARM64 Linux (e.g. NVIDIA GH200) | Pure Julia Zarr client — no binary dependency |
+
+On x86-64 the executable backend supports any dataset and variable in the Copernicus Marine catalogue. The pure Julia backend currently supports a curated set of global multiyear datasets listed below.
 
 ## Installation
 
@@ -77,3 +84,31 @@ run(`$exe subset --help`)
 
 Downloaded data files (NetCDF or Zarr) can be read with packages such as
 [NCDatasets.jl](https://github.com/JuliaGeo/NCDatasets.jl).
+
+## Supported datasets (pure Julia backend)
+
+The following global multiyear datasets are available on all platforms via the pure Julia
+Zarr backend. Output is written as NetCDF with positive-down depth coordinates.
+
+### Global Physics — GLOBAL_MULTIYEAR_PHY_001_030 (0.083°)
+
+| Dataset ID | Temporal resolution |
+|---|---|
+| `cmems_mod_glo_phy_my_0.083deg_P1D-m` | Daily |
+| `cmems_mod_glo_phy_my_0.083deg_P1M-m` | Monthly |
+
+Variables: `thetao`, `so`, `uo`, `vo`, `zos`
+
+### Global Biogeochemistry — GLOBAL_MULTIYEAR_BGC_001_029 (0.25°)
+
+| Dataset ID | Temporal resolution |
+|---|---|
+| `cmems_mod_glo_bgc_my_0.25deg_P1D-m` | Daily |
+| `cmems_mod_glo_bgc_my_0.25deg_P1M-m` | Monthly |
+
+Variables: `chl`, `no3`, `nppv`, `o2`, `po4`, `si`
+
+Other dataset IDs can still be used on ARM64 — the backend falls back to STAC discovery and
+will attempt to fetch the dataset's geoChunked Zarr store. If the store layout matches the
+supported format the download will succeed; add the URL to `KNOWN_ZARR_URLS` in
+`src/zarr_backend.jl` to avoid the discovery overhead on future calls.
