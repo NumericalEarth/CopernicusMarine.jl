@@ -37,6 +37,7 @@ end
 # (mdl-arco-geo-025) which includes depth_chunk=0 (~0.5 m); timeChunked does not.
 
 const KNOWN_ZARR_URLS = Dict{String,String}(
+    # Physics 0.083° (bucket mdl-arco-geo-025)
     "cmems_mod_glo_phy_my_0.083deg_P1D-m" =>
         "https://s3.waw3-1.cloudferro.com/mdl-arco-geo-025/arco/" *
         "GLOBAL_MULTIYEAR_PHY_001_030/" *
@@ -45,6 +46,15 @@ const KNOWN_ZARR_URLS = Dict{String,String}(
         "https://s3.waw3-1.cloudferro.com/mdl-arco-geo-025/arco/" *
         "GLOBAL_MULTIYEAR_PHY_001_030/" *
         "cmems_mod_glo_phy_my_0.083deg_P1M-m_202311/geoChunked.zarr",
+    # BGC 0.25° (bucket mdl-arco-geo-018; variables: chl, no3, nppv, o2, po4, si)
+    "cmems_mod_glo_bgc_my_0.25deg_P1D-m" =>
+        "https://s3.waw3-1.cloudferro.com/mdl-arco-geo-018/arco/" *
+        "GLOBAL_MULTIYEAR_BGC_001_029/" *
+        "cmems_mod_glo_bgc_my_0.25deg_P1D-m_202406/geoChunked.zarr",
+    "cmems_mod_glo_bgc_my_0.25deg_P1M-m" =>
+        "https://s3.waw3-1.cloudferro.com/mdl-arco-geo-018/arco/" *
+        "GLOBAL_MULTIYEAR_BGC_001_029/" *
+        "cmems_mod_glo_bgc_my_0.25deg_P1M-m_202406/geoChunked.zarr",
 )
 
 # ─── STAC discovery (used when dataset not in KNOWN_ZARR_URLS) ────────────────
@@ -430,6 +440,13 @@ const CMEMS_LONG_NAMES = Dict(
     "vo"     => "Northward sea water velocity",
     "zos"    => "Sea surface height above geoid",
     "deptho" => "Sea floor depth below geoid",
+    # BGC
+    "chl"    => "Total chlorophyll",
+    "no3"    => "Nitrate",
+    "nppv"   => "Total primary production of phytoplankton",
+    "o2"     => "Dissolved oxygen",
+    "po4"    => "Phosphate",
+    "si"     => "Dissolved silicate",
 )
 
 const CMEMS_UNITS = Dict(
@@ -439,6 +456,13 @@ const CMEMS_UNITS = Dict(
     "vo"     => "m s-1",
     "zos"    => "m",
     "deptho" => "m",
+    # BGC
+    "chl"    => "mg m-3",
+    "no3"    => "mmol m-3",
+    "nppv"   => "mg m-3 day-1",
+    "o2"     => "mmol m-3",
+    "po4"    => "mmol m-3",
+    "si"     => "mmol m-3",
 )
 
 function write_nc(path, data, variable_list,

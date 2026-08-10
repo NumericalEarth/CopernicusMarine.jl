@@ -168,13 +168,19 @@ const CM = CopernicusMarine
     end
 
     @testset "Zarr: known URL lookup" begin
-        url = CM.zarr_url("cmems_mod_glo_phy_my_0.083deg_P1D-m")
-        @test occursin("geoChunked", url)
-        @test occursin("s3.waw3-1.cloudferro.com", url)
-        @test endswith(url, ".zarr")
+        for id in ("cmems_mod_glo_phy_my_0.083deg_P1D-m",
+                   "cmems_mod_glo_phy_my_0.083deg_P1M-m",
+                   "cmems_mod_glo_bgc_my_0.25deg_P1D-m",
+                   "cmems_mod_glo_bgc_my_0.25deg_P1M-m")
+            url = CM.zarr_url(id)
+            @test occursin("geoChunked", url)
+            @test occursin("s3.waw3-1.cloudferro.com", url)
+            @test endswith(url, ".zarr")
+        end
 
-        url2 = CM.zarr_url("cmems_mod_glo_phy_my_0.083deg_P1M-m")
-        @test occursin("geoChunked", url2)
+        # BGC uses a different bucket (geo-018) from physics (geo-025)
+        @test occursin("mdl-arco-geo-018", CM.zarr_url("cmems_mod_glo_bgc_my_0.25deg_P1D-m"))
+        @test occursin("mdl-arco-geo-025", CM.zarr_url("cmems_mod_glo_phy_my_0.083deg_P1D-m"))
     end
 
 end

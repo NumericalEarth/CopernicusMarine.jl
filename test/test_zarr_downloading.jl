@@ -100,6 +100,46 @@ end
         end
     end
 
+    @testset "BGC daily: chl and o2, surface box near Bouvet" begin
+        out = joinpath(tempdir(), "cmtest_$(getpid())_bgc.nc")
+        try
+            path = CM.subset_via_zarr(
+                dataset_id        = "cmems_mod_glo_bgc_my_0.25deg_P1D-m",
+                variable          = ["chl", "o2"],
+                username          = username,
+                password          = password,
+                output_directory  = tempdir(),
+                output_filename   = basename(out),
+                minimum_longitude = 3.0,
+                maximum_longitude = 4.0,
+                minimum_latitude  = -55.0,
+                maximum_latitude  = -54.0,
+                minimum_depth     = 0.0,
+                maximum_depth     = 10.0,
+                start_datetime    = "2000-01-01T00:00:00",
+                end_datetime      = "2000-01-01T00:00:00",
+                skip_existing     = false,
+            )
+            @test isfile(path)
+            NCDataset(path) do ds
+                @test haskey(ds, "chl")
+                @test haskey(ds, "o2")
+
+                chl = ds["chl"][:, :, :, :]
+                @test !all(ismissing, chl)
+
+                depths = ds["depth"][:]
+                @test depths[1] < 1.0     # geoChunked includes ~0.5 m surface level
+                @test all(diff(depths) .> 0)
+
+                @test ds["chl"].attrib["units"] == "mg m-3"
+                @test ds["o2"].attrib["units"]  == "mmol m-3"
+            end
+        finally
+            rm(out; force=true)
+        end
+    end
+
     @testset "monthly dataset URL resolves to geoChunked" begin
         url = CM.zarr_url("cmems_mod_glo_phy_my_0.083deg_P1M-m")
         @test occursin("geoChunked", url)
