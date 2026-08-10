@@ -10,12 +10,12 @@ include("zarr_backend.jl") # pure Julia Zarr path + _subset_via_zarr
 """
 $TYPEDSIGNATURES
 
-Download a subset of a CMEMS dataset as a NetCDF file.
+Download a subset of a CMEMS dataset and write it to a NetCDF file.
 
 When a `copernicusmarine` executable is available (either on `PATH` or
 auto-downloaded), it is used directly. On platforms where the binary is not
-supported (e.g. ARM64 Linux), the request is served by a pure Julia Zarr
-client instead.
+supported (e.g. ARM64 Linux), data is fetched directly from the CMEMS Zarr
+store by a pure Julia client; output is still written as NetCDF.
 
 # Keyword arguments
 

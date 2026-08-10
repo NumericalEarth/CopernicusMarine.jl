@@ -12,7 +12,7 @@ mutable struct ZarrTokenCache
     expires_at :: DateTime
 end
 
-const TOKEN_CACHE = Ref{Union{Nothing,ZarrTokenCache}}(nothing)
+const TOKEN_CACHE = Ref{Union{Nothing, ZarrTokenCache}}(nothing)
 
 function get_token(username::String, password::String)
     cache = TOKEN_CACHE[]
@@ -33,8 +33,11 @@ function get_token(username::String, password::String)
 end
 
 # ─── Known Zarr URLs (avoids STAC traversal on every call) ────────────────────
-# Add BGC dataset IDs here as they are validated. Physics datasets use geoChunked
-# (mdl-arco-geo-025) which includes depth_chunk=0 (~0.5 m); timeChunked does not.
+# URLs point to versioned geoChunked stores on CloudFerro S3. They may go stale
+# when CMEMS releases a new version; if so, remove the stale entry and
+# discover_zarr_url() will find the current URL via the STAC catalogue.
+# Physics datasets use geoChunked (mdl-arco-geo-025) which includes depth_chunk=0
+# (~0.5 m); timeChunked does not. BGC uses mdl-arco-geo-018.
 
 const KNOWN_ZARR_URLS = Dict{String,String}(
     # Physics 0.083° (bucket mdl-arco-geo-025)
@@ -107,25 +110,25 @@ end
 
 # ─── Zarr metadata ─────────────────────────────────────────────────────────────
 
-struct ZarrArrayMeta
-    shape         :: NTuple{4,Int}
+struct ZarrArrayMeta{C, F, S, O}
+    shape         :: NTuple{4, Int}
     ndim          :: Int
-    chunks        :: NTuple{4,Int}
+    chunks        :: NTuple{4, Int}
     dtype         :: String
-    compressor_id :: Union{Nothing,String}
-    fill_value    :: Union{Nothing,Float64}
-    scale_factor  :: Union{Nothing,Float64}
-    add_offset    :: Union{Nothing,Float64}
+    compressor_id :: C
+    fill_value    :: F
+    scale_factor  :: S
+    add_offset    :: O
 end
 
 function load_zmeta(url::String)
     resp = HTTP.get(url * "/.zmetadata"; status_exception=true, readtimeout=30)
-    JSON3.read(resp.body)
+    return JSON3.read(resp.body)
 end
 
 function parse_array_meta(zmeta, varpath::String)::ZarrArrayMeta
     zarray    = zmeta["metadata"][varpath * "/.zarray"]
-    n_dims    = length(zarray["shape"])
+    Ndims     = length(zarray["shape"])
     shape_vec = Int[zarray["shape"]...]
     chunk_vec = Int[zarray["chunks"]...]
 
@@ -155,7 +158,7 @@ function parse_array_meta(zmeta, varpath::String)::ZarrArrayMeta
 
     return ZarrArrayMeta(
         ntuple(i -> shape_vec[i], 4),
-        n_dims,
+        Ndims,
         ntuple(i -> chunk_vec[i], 4),
         String(zarray["dtype"]),
         compressor_id, fill_value, scale_factor, add_offset,
@@ -224,18 +227,17 @@ end
 
 # ─── 1-D coordinate loading ────────────────────────────────────────────────────
 
-function load_coordinate(url::String, zmeta, varpath::String,
-                         token::Union{String,Nothing})::Vector{Float64}
+function load_coordinate(url, zmeta, varpath, token)
     meta       = parse_array_meta(zmeta, varpath)
-    n_elements = meta.shape[4]
+    Nelements  = meta.shape[4]
     chunk_size = meta.chunks[4]
-    n_chunks   = cld(n_elements, chunk_size)
+    Nchunks    = cld(Nelements, chunk_size)
 
-    result = Vector{Float64}(undef, n_elements)
-    for chunk_index in 0:(n_chunks - 1)
+    result = Vector{Float64}(undef, Nelements)
+    for chunk_index in 0:(Nchunks - 1)
         key   = "$varpath/$chunk_index"
         start = chunk_index * chunk_size
-        len   = min(chunk_size, n_elements - start)
+        len   = min(chunk_size, Nelements - start)
         raw   = fetch_raw(url, key, token)
         isnothing(raw) && continue
         vals  = decode_chunk(raw, meta)
@@ -310,21 +312,21 @@ function overlap_ranges(chunk_start, chunk_size, global_start, global_stop, tota
     return actual, src, dst
 end
 
-# Returns (n_lon, n_lat, n_depth, n_time) for NCDatasets column-major layout.
+# Returns (Nlon, Nlat, Ndepth, Ntime) for NCDatasets column-major layout.
 function fetch_4d(url::String, meta::ZarrArrayMeta, varname::String,
                   time_indices::Vector{Int},
                   depth_indices::AbstractRange{Int},
                   latitude_indices::AbstractRange{Int},
                   longitude_indices::AbstractRange{Int},
-                  token::Union{String,Nothing})
+                  token::Union{String, Nothing})
     chunk_time, chunk_depth, chunk_lat, chunk_lon = meta.chunks
-    _, n_depth_total, n_lat_total, n_lon_total    = meta.shape
+    _, Ndepth_total, Nlat_total, Nlon_total       = meta.shape
 
-    n_time  = length(time_indices)
-    n_depth = length(depth_indices)
-    n_lat   = length(latitude_indices)
-    n_lon   = length(longitude_indices)
-    out     = fill(NaN32, n_lon, n_lat, n_depth, n_time)
+    Ntime  = length(time_indices)
+    Ndepth = length(depth_indices)
+    Nlat   = length(latitude_indices)
+    Nlon   = length(longitude_indices)
+    out    = fill(NaN32, Nlon, Nlat, Ndepth, Ntime)
 
     lat_start = first(latitude_indices);  lat_stop = last(latitude_indices)
     lon_start = first(longitude_indices); lon_stop = last(longitude_indices)
@@ -339,10 +341,10 @@ function fetch_4d(url::String, meta::ZarrArrayMeta, varname::String,
         lon_chunk in lon_chunk_start:lon_chunk_stop
 
         act_lat, src_lat, dst_lat = overlap_ranges(lat_chunk, chunk_lat,
-                                                    lat_start, lat_stop, n_lat_total)
+                                                   lat_start, lat_stop, Nlat_total)
         isnothing(act_lat) && continue
         act_lon, src_lon, dst_lon = overlap_ranges(lon_chunk, chunk_lon,
-                                                    lon_start, lon_stop, n_lon_total)
+                                                   lon_start, lon_stop, Nlon_total)
         isnothing(act_lon) && continue
 
         t_chunk = div(ti, chunk_time)
@@ -371,22 +373,22 @@ function fetch_4d(url::String, meta::ZarrArrayMeta, varname::String,
     return out
 end
 
-# Returns (n_lon, n_lat, n_time) for 3-D variables like zos.
+# Returns (Nlon, Nlat, Ntime) for 3-D variables like zos.
 function fetch_3d(url::String, meta::ZarrArrayMeta, varname::String,
                   time_indices::Vector{Int},
                   latitude_indices::AbstractRange{Int},
                   longitude_indices::AbstractRange{Int},
-                  token::Union{String,Nothing})
+                  token::Union{String, Nothing})
     @assert meta.ndim == 3 "Expected 3-D variable, got ndim=$(meta.ndim)"
 
     # parse_array_meta left-pads to 4 dims; real dims at indices 2:4
-    n_time_total, n_lat_total, n_lon_total = meta.shape[2], meta.shape[3], meta.shape[4]
-    chunk_time, chunk_lat, chunk_lon       = meta.chunks[2], meta.chunks[3], meta.chunks[4]
+    Ntime_total, Nlat_total, Nlon_total = meta.shape[2], meta.shape[3], meta.shape[4]
+    chunk_time, chunk_lat, chunk_lon    = meta.chunks[2], meta.chunks[3], meta.chunks[4]
 
-    n_time = length(time_indices)
-    n_lat  = length(latitude_indices)
-    n_lon  = length(longitude_indices)
-    out    = fill(NaN32, n_lon, n_lat, n_time)
+    Ntime = length(time_indices)
+    Nlat  = length(latitude_indices)
+    Nlon  = length(longitude_indices)
+    out   = fill(NaN32, Nlon, Nlat, Ntime)
 
     lat_start = first(latitude_indices);  lat_stop = last(latitude_indices)
     lon_start = first(longitude_indices); lon_stop = last(longitude_indices)
@@ -401,10 +403,10 @@ function fetch_3d(url::String, meta::ZarrArrayMeta, varname::String,
         lon_chunk in lon_chunk_start:lon_chunk_stop
 
         act_lat, src_lat, dst_lat = overlap_ranges(lat_chunk, chunk_lat,
-                                                    lat_start, lat_stop, n_lat_total)
+                                                   lat_start, lat_stop, Nlat_total)
         isnothing(act_lat) && continue
         act_lon, src_lon, dst_lon = overlap_ranges(lon_chunk, chunk_lon,
-                                                    lon_start, lon_stop, n_lon_total)
+                                                   lon_start, lon_stop, Nlon_total)
         isnothing(act_lon) && continue
 
         t_chunk = div(ti, chunk_time)
