@@ -61,10 +61,10 @@ function subset(;
             minimum_depth, maximum_depth,
             start_datetime, end_datetime,
             skip_existing, coordinates_selection_method, kwargs...)
-    if _has_executable()
-        return _subset_via_executable(; kw...)
+    if has_executable()
+        return subset_via_executable(; kw...)
     else
-        return _subset_via_zarr(; kw...)
+        return subset_via_zarr(; kw...)
     end
 end
 

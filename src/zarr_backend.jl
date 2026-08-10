@@ -5,30 +5,30 @@ using NCDatasets: NCDataset, defDim, defVar
 
 # ─── OAuth2 token ─────────────────────────────────────────────────────────────
 
-const _AUTH_URL = "https://auth.marine.copernicus.eu/realms/MIS/protocol/openid-connect/token"
+const AUTH_URL = "https://auth.marine.copernicus.eu/realms/MIS/protocol/openid-connect/token"
 
-mutable struct _TokenCache
-    token::String
-    expires_at::DateTime
+mutable struct ZarrTokenCache
+    token      :: String
+    expires_at :: DateTime
 end
 
-const _CACHE = Ref{Union{Nothing,_TokenCache}}(nothing)
+const TOKEN_CACHE = Ref{Union{Nothing,ZarrTokenCache}}(nothing)
 
-function _get_token(username::String, password::String)
-    cache = _CACHE[]
+function get_token(username::String, password::String)
+    cache = TOKEN_CACHE[]
     !isnothing(cache) && now() < cache.expires_at - Second(60) && return cache.token
 
     body = "client_id=toolbox&grant_type=password" *
            "&username=$(HTTP.URIs.escapeuri(username))" *
            "&password=$(HTTP.URIs.escapeuri(password))" *
            "&scope=openid+profile+email"
-    resp = HTTP.post(_AUTH_URL,
+    resp = HTTP.post(AUTH_URL,
                      ["Content-Type" => "application/x-www-form-urlencoded"],
                      body; status_exception=true, readtimeout=30)
     data = JSON3.read(resp.body)
     token = String(data["access_token"])
-    expires_in = get(data, "expires_in", 600)
-    _CACHE[] = _TokenCache(token, now() + Second(Int(expires_in)))
+    expires_in = haskey(data, "expires_in") ? Int(data["expires_in"]) : 600
+    TOKEN_CACHE[] = ZarrTokenCache(token, now() + Second(Int(expires_in)))
     return token
 end
 
@@ -36,7 +36,7 @@ end
 # Add BGC dataset IDs here as they are validated. Physics datasets use geoChunked
 # (mdl-arco-geo-025) which includes depth_chunk=0 (~0.5 m); timeChunked does not.
 
-const _KNOWN_ZARR = Dict{String,String}(
+const KNOWN_ZARR_URLS = Dict{String,String}(
     "cmems_mod_glo_phy_my_0.083deg_P1D-m" =>
         "https://s3.waw3-1.cloudferro.com/mdl-arco-geo-025/arco/" *
         "GLOBAL_MULTIYEAR_PHY_001_030/" *
@@ -47,12 +47,12 @@ const _KNOWN_ZARR = Dict{String,String}(
         "cmems_mod_glo_phy_my_0.083deg_P1M-m_202311/geoChunked.zarr",
 )
 
-# ─── STAC discovery (used when dataset not in _KNOWN_ZARR) ────────────────────
+# ─── STAC discovery (used when dataset not in KNOWN_ZARR_URLS) ────────────────
 
-const _CONFIG_URL = "https://stac.marine.copernicus.eu/clients-config-v1"
+const CONFIG_URL = "https://stac.marine.copernicus.eu/clients-config-v1"
 
-function _discover_zarr_url(dataset_id::String)
-    config      = JSON3.read(HTTP.get(_CONFIG_URL; status_exception=true, readtimeout=30).body)
+function discover_zarr_url(dataset_id::String)
+    config      = JSON3.read(HTTP.get(CONFIG_URL; status_exception=true, readtimeout=30).body)
     stac_root   = String(config["catalogues"][1]["stacRoot"])
     mapping_url = String(config["catalogues"][1]["idMapping"])
 
@@ -67,7 +67,7 @@ function _discover_zarr_url(dataset_id::String)
         product = JSON3.read(product_resp.body)
 
         for link in product["links"]
-            get(link, "rel", "") == "item" || continue
+            haskey(link, "rel") && link["rel"] == "item" || continue
             href = String(link["href"])
             contains(href, dataset_id) || continue
 
@@ -78,7 +78,7 @@ function _discover_zarr_url(dataset_id::String)
 
             geo_url, time_url = nothing, nothing
             for (_, asset) in pairs(dataset["assets"])
-                asset_href = get(asset, "href", "")
+                asset_href = haskey(asset, "href") ? String(asset["href"]) : ""
                 contains(asset_href, "geoChunked")  && (geo_url  = String(asset_href))
                 contains(asset_href, "timeChunked") && (time_url = String(asset_href))
             end
@@ -90,30 +90,30 @@ function _discover_zarr_url(dataset_id::String)
     error("No geoChunked or timeChunked Zarr found for '$dataset_id'")
 end
 
-function _zarr_url(dataset_id::String)
-    haskey(_KNOWN_ZARR, dataset_id) && return _KNOWN_ZARR[dataset_id]
-    return _discover_zarr_url(dataset_id)
+function zarr_url(dataset_id::String)
+    haskey(KNOWN_ZARR_URLS, dataset_id) && return KNOWN_ZARR_URLS[dataset_id]
+    return discover_zarr_url(dataset_id)
 end
 
 # ─── Zarr metadata ─────────────────────────────────────────────────────────────
 
-struct _ArrayMeta
-    shape::NTuple{4,Int}
-    ndim::Int
-    chunks::NTuple{4,Int}
-    dtype::String
-    compressor_id::Union{Nothing,String}
-    fill_value::Union{Nothing,Float64}
-    scale_factor::Union{Nothing,Float64}
-    add_offset::Union{Nothing,Float64}
+struct ZarrArrayMeta
+    shape         :: NTuple{4,Int}
+    ndim          :: Int
+    chunks        :: NTuple{4,Int}
+    dtype         :: String
+    compressor_id :: Union{Nothing,String}
+    fill_value    :: Union{Nothing,Float64}
+    scale_factor  :: Union{Nothing,Float64}
+    add_offset    :: Union{Nothing,Float64}
 end
 
-function _load_zmeta(zarr_url::String)
-    resp = HTTP.get(zarr_url * "/.zmetadata"; status_exception=true, readtimeout=30)
+function load_zmeta(url::String)
+    resp = HTTP.get(url * "/.zmetadata"; status_exception=true, readtimeout=30)
     JSON3.read(resp.body)
 end
 
-function _parse_array_meta(zmeta, varpath::String)::_ArrayMeta
+function parse_array_meta(zmeta, varpath::String)::ZarrArrayMeta
     zarray    = zmeta["metadata"][varpath * "/.zarray"]
     n_dims    = length(zarray["shape"])
     shape_vec = Int[zarray["shape"]...]
@@ -123,7 +123,7 @@ function _parse_array_meta(zmeta, varpath::String)::_ArrayMeta
     while length(chunk_vec) < 4; pushfirst!(chunk_vec, 1); end
 
     compressor_id = let c = zarray["compressor"]
-        isnothing(c) ? nothing : get(c, "id", nothing)
+        (isnothing(c) || !haskey(c, "id")) ? nothing : String(c["id"])
     end
     fill_value = let f = zarray["fill_value"]
         if isnothing(f)
@@ -143,7 +143,7 @@ function _parse_array_meta(zmeta, varpath::String)::_ArrayMeta
         haskey(attrs, "add_offset")   && (add_offset   = Float64(attrs["add_offset"]))
     end
 
-    return _ArrayMeta(
+    return ZarrArrayMeta(
         ntuple(i -> shape_vec[i], 4),
         n_dims,
         ntuple(i -> chunk_vec[i], 4),
@@ -154,15 +154,15 @@ end
 
 # ─── Chunk fetch & decode ──────────────────────────────────────────────────────
 
-function _fetch_raw(zarr_url::String, key::String, token::Union{String,Nothing})
+function fetch_raw(url::String, key::String, token::Union{String,Nothing})
     headers = isnothing(token) ? Pair{String,String}[] : ["Authorization" => "Bearer $token"]
     for attempt in 1:5
-        resp = HTTP.get(zarr_url * "/" * key, headers;
+        resp = HTTP.get(url * "/" * key, headers;
                         status_exception=false, readtimeout=120, retry=false)
         # S3 endpoints reject Bearer tokens with 400; retry without auth
         if resp.status == 400 && !isempty(headers)
             headers = Pair{String,String}[]
-            resp = HTTP.get(zarr_url * "/" * key, headers;
+            resp = HTTP.get(url * "/" * key, headers;
                             status_exception=false, readtimeout=120, retry=false)
         end
         (resp.status == 404 || resp.status == 403) && return nothing
@@ -173,7 +173,7 @@ function _fetch_raw(zarr_url::String, key::String, token::Union{String,Nothing})
     end
 end
 
-function _decode(raw::Vector{UInt8}, meta::_ArrayMeta)::Vector{Float32}
+function decode_chunk(raw::Vector{UInt8}, meta::ZarrArrayMeta)::Vector{Float32}
     buffer = if meta.compressor_id == "blosc"
         Blosc.decompress(UInt8, raw)
     else
@@ -214,9 +214,9 @@ end
 
 # ─── 1-D coordinate loading ────────────────────────────────────────────────────
 
-function _load_coord_1d(zarr_url::String, zmeta, varpath::String,
-                        token::Union{String,Nothing})::Vector{Float64}
-    meta       = _parse_array_meta(zmeta, varpath)
+function load_coordinate(url::String, zmeta, varpath::String,
+                         token::Union{String,Nothing})::Vector{Float64}
+    meta       = parse_array_meta(zmeta, varpath)
     n_elements = meta.shape[4]
     chunk_size = meta.chunks[4]
     n_chunks   = cld(n_elements, chunk_size)
@@ -226,9 +226,9 @@ function _load_coord_1d(zarr_url::String, zmeta, varpath::String,
         key   = "$varpath/$chunk_index"
         start = chunk_index * chunk_size
         len   = min(chunk_size, n_elements - start)
-        raw   = _fetch_raw(zarr_url, key, token)
+        raw   = fetch_raw(url, key, token)
         isnothing(raw) && continue
-        vals  = _decode(raw, meta)
+        vals  = decode_chunk(raw, meta)
         result[(start + 1):(start + len)] .= Float64.(vals[1:len])
     end
     return result
@@ -236,10 +236,10 @@ end
 
 # ─── Index helpers ─────────────────────────────────────────────────────────────
 
-_range_in(coords, lo, hi) =
+range_in(coords, lo, hi) =
     searchsortedfirst(coords, Float64(lo)) : searchsortedlast(coords, Float64(hi))
 
-function _depth_range(depths, minimum_depth, maximum_depth)
+function depth_range(depths, minimum_depth, maximum_depth)
     isnothing(minimum_depth) && isnothing(maximum_depth) && return 1:length(depths)
     lo = isnothing(minimum_depth) ? -Inf : Float64(minimum_depth)
     hi = isnothing(maximum_depth) ?  Inf : Float64(maximum_depth)
@@ -251,13 +251,13 @@ function _depth_range(depths, minimum_depth, maximum_depth)
     end
 end
 
-const _EPOCH = DateTime(1950, 1, 1)
+const EPOCH = DateTime(1950, 1, 1)
 
-function _time_range(time_values::Vector{Float64}, t0::DateTime, t1::DateTime)
+function time_range(time_values::Vector{Float64}, t0::DateTime, t1::DateTime)
     date_start, date_stop = Date(t0), Date(t1)
     indices = Int[]
     for (i, hours) in enumerate(time_values)
-        dt = _EPOCH + Hour(round(Int, hours))
+        dt = EPOCH + Hour(round(Int, hours))
         Date(dt) >= date_start && Date(dt) <= date_stop && push!(indices, i - 1)
     end
     return indices
@@ -265,7 +265,7 @@ end
 
 # ─── 4-D chunk download (time, depth, latitude, longitude) ────────────────────
 
-struct _ChunkJob4D
+struct ChunkJob4D
     key        :: String
     actual_lon :: Int
     actual_lat :: Int
@@ -277,7 +277,7 @@ struct _ChunkJob4D
     it         :: Int
 end
 
-struct _ChunkJob3D
+struct ChunkJob3D
     key        :: String
     actual_lon :: Int
     actual_lat :: Int
@@ -288,7 +288,7 @@ struct _ChunkJob3D
     it         :: Int
 end
 
-function _overlap_ranges(chunk_start, chunk_size, global_start, global_stop, total)
+function overlap_ranges(chunk_start, chunk_size, global_start, global_stop, total)
     actual  = min(chunk_size, total - chunk_start * chunk_size)
     c_start = chunk_start * chunk_size + 1
     c_stop  = c_start + actual - 1
@@ -301,12 +301,12 @@ function _overlap_ranges(chunk_start, chunk_size, global_start, global_stop, tot
 end
 
 # Returns (n_lon, n_lat, n_depth, n_time) for NCDatasets column-major layout.
-function _fetch_4d(zarr_url::String, meta::_ArrayMeta, varname::String,
-                   time_indices::Vector{Int},
-                   depth_indices::AbstractRange{Int},
-                   latitude_indices::AbstractRange{Int},
-                   longitude_indices::AbstractRange{Int},
-                   token::Union{String,Nothing})
+function fetch_4d(url::String, meta::ZarrArrayMeta, varname::String,
+                  time_indices::Vector{Int},
+                  depth_indices::AbstractRange{Int},
+                  latitude_indices::AbstractRange{Int},
+                  longitude_indices::AbstractRange{Int},
+                  token::Union{String,Nothing})
     chunk_time, chunk_depth, chunk_lat, chunk_lon = meta.chunks
     _, n_depth_total, n_lat_total, n_lon_total    = meta.shape
 
@@ -323,31 +323,31 @@ function _fetch_4d(zarr_url::String, meta::_ArrayMeta, varname::String,
     lon_chunk_start = div(lon_start - 1, chunk_lon)
     lon_chunk_stop  = div(lon_stop  - 1, chunk_lon)
 
-    jobs = _ChunkJob4D[]
+    jobs = ChunkJob4D[]
     for (it, ti) in enumerate(time_indices), (id, di) in enumerate(depth_indices),
         lat_chunk in lat_chunk_start:lat_chunk_stop,
         lon_chunk in lon_chunk_start:lon_chunk_stop
 
-        act_lat, src_lat, dst_lat = _overlap_ranges(lat_chunk, chunk_lat,
-                                                     lat_start, lat_stop, n_lat_total)
+        act_lat, src_lat, dst_lat = overlap_ranges(lat_chunk, chunk_lat,
+                                                    lat_start, lat_stop, n_lat_total)
         isnothing(act_lat) && continue
-        act_lon, src_lon, dst_lon = _overlap_ranges(lon_chunk, chunk_lon,
-                                                     lon_start, lon_stop, n_lon_total)
+        act_lon, src_lon, dst_lon = overlap_ranges(lon_chunk, chunk_lon,
+                                                    lon_start, lon_stop, n_lon_total)
         isnothing(act_lon) && continue
 
         t_chunk = div(ti, chunk_time)
         d_chunk = div(di - 1, chunk_depth)
         key = "$varname/$t_chunk.$d_chunk.$lat_chunk.$lon_chunk"
-        push!(jobs, _ChunkJob4D(key, act_lon, act_lat, src_lon, src_lat,
-                                dst_lon, dst_lat, id, it))
+        push!(jobs, ChunkJob4D(key, act_lon, act_lat, src_lon, src_lat,
+                               dst_lon, dst_lat, id, it))
     end
 
     @info "  $varname: fetching $(length(jobs)) chunks ($(min(32, length(jobs))) concurrent)..."
     results = asyncmap(jobs; ntasks=min(32, length(jobs))) do job
-        raw = _fetch_raw(zarr_url, job.key, token)
+        raw = fetch_raw(url, job.key, token)
         isnothing(raw) && return nothing
         # Zarr C-order (lat × lon) → Julia column-major (lon × lat)
-        tile = reshape(_decode(raw, meta)[1:(job.actual_lon * job.actual_lat)],
+        tile = reshape(decode_chunk(raw, meta)[1:(job.actual_lon * job.actual_lat)],
                        job.actual_lon, job.actual_lat)
         (slice   = tile[job.src_lon, job.src_lat],
          dst_lon = job.dst_lon, dst_lat = job.dst_lat,
@@ -362,14 +362,14 @@ function _fetch_4d(zarr_url::String, meta::_ArrayMeta, varname::String,
 end
 
 # Returns (n_lon, n_lat, n_time) for 3-D variables like zos.
-function _fetch_3d(zarr_url::String, meta::_ArrayMeta, varname::String,
-                   time_indices::Vector{Int},
-                   latitude_indices::AbstractRange{Int},
-                   longitude_indices::AbstractRange{Int},
-                   token::Union{String,Nothing})
+function fetch_3d(url::String, meta::ZarrArrayMeta, varname::String,
+                  time_indices::Vector{Int},
+                  latitude_indices::AbstractRange{Int},
+                  longitude_indices::AbstractRange{Int},
+                  token::Union{String,Nothing})
     @assert meta.ndim == 3 "Expected 3-D variable, got ndim=$(meta.ndim)"
 
-    # _parse_array_meta left-pads to 4 dims; real dims at indices 2:4
+    # parse_array_meta left-pads to 4 dims; real dims at indices 2:4
     n_time_total, n_lat_total, n_lon_total = meta.shape[2], meta.shape[3], meta.shape[4]
     chunk_time, chunk_lat, chunk_lon       = meta.chunks[2], meta.chunks[3], meta.chunks[4]
 
@@ -385,29 +385,29 @@ function _fetch_3d(zarr_url::String, meta::_ArrayMeta, varname::String,
     lon_chunk_start = div(lon_start - 1, chunk_lon)
     lon_chunk_stop  = div(lon_stop  - 1, chunk_lon)
 
-    jobs = _ChunkJob3D[]
+    jobs = ChunkJob3D[]
     for (it, ti) in enumerate(time_indices),
         lat_chunk in lat_chunk_start:lat_chunk_stop,
         lon_chunk in lon_chunk_start:lon_chunk_stop
 
-        act_lat, src_lat, dst_lat = _overlap_ranges(lat_chunk, chunk_lat,
-                                                     lat_start, lat_stop, n_lat_total)
+        act_lat, src_lat, dst_lat = overlap_ranges(lat_chunk, chunk_lat,
+                                                    lat_start, lat_stop, n_lat_total)
         isnothing(act_lat) && continue
-        act_lon, src_lon, dst_lon = _overlap_ranges(lon_chunk, chunk_lon,
-                                                     lon_start, lon_stop, n_lon_total)
+        act_lon, src_lon, dst_lon = overlap_ranges(lon_chunk, chunk_lon,
+                                                    lon_start, lon_stop, n_lon_total)
         isnothing(act_lon) && continue
 
         t_chunk = div(ti, chunk_time)
         key = "$varname/$t_chunk.$lat_chunk.$lon_chunk"
-        push!(jobs, _ChunkJob3D(key, act_lon, act_lat, src_lon, src_lat,
-                                dst_lon, dst_lat, it))
+        push!(jobs, ChunkJob3D(key, act_lon, act_lat, src_lon, src_lat,
+                               dst_lon, dst_lat, it))
     end
 
     @info "  $varname: fetching $(length(jobs)) chunks ($(min(32, length(jobs))) concurrent)..."
     results = asyncmap(jobs; ntasks=min(32, length(jobs))) do job
-        raw = _fetch_raw(zarr_url, job.key, token)
+        raw = fetch_raw(url, job.key, token)
         isnothing(raw) && return nothing
-        tile = reshape(_decode(raw, meta)[1:(job.actual_lon * job.actual_lat)],
+        tile = reshape(decode_chunk(raw, meta)[1:(job.actual_lon * job.actual_lat)],
                        job.actual_lon, job.actual_lat)
         (slice   = tile[job.src_lon, job.src_lat],
          dst_lon = job.dst_lon, dst_lat = job.dst_lat,
@@ -423,7 +423,7 @@ end
 
 # ─── NetCDF output ─────────────────────────────────────────────────────────────
 
-const _LONG_NAMES = Dict(
+const CMEMS_LONG_NAMES = Dict(
     "thetao" => "Sea water potential temperature",
     "so"     => "Sea water salinity",
     "uo"     => "Eastward sea water velocity",
@@ -432,7 +432,7 @@ const _LONG_NAMES = Dict(
     "deptho" => "Sea floor depth below geoid",
 )
 
-const _UNITS = Dict(
+const CMEMS_UNITS = Dict(
     "thetao" => "degrees_C",
     "so"     => "0.001",
     "uo"     => "m s-1",
@@ -441,8 +441,8 @@ const _UNITS = Dict(
     "deptho" => "m",
 )
 
-function _write_nc(path, data, variable_list,
-                   longitudes, latitudes, depths, time_values::Vector{Float64})
+function write_nc(path, data, variable_list,
+                  longitudes, latitudes, depths, time_values::Vector{Float64})
     NCDataset(path, "c") do ds
         defDim(ds, "longitude", length(longitudes))
         defDim(ds, "latitude",  length(latitudes))
@@ -488,8 +488,8 @@ function _write_nc(path, data, variable_list,
                 nothing
             end
             if !isnothing(var)
-                var.attrib["long_name"] = get(_LONG_NAMES, varname, varname)
-                var.attrib["units"]     = get(_UNITS, varname, "")
+                var.attrib["long_name"] = Base.get(CMEMS_LONG_NAMES, varname, varname)
+                var.attrib["units"]     = Base.get(CMEMS_UNITS, varname, "")
             end
         end
 
@@ -501,7 +501,7 @@ end
 
 # ─── Pure-Julia download ───────────────────────────────────────────────────────
 
-function _subset_via_zarr(;
+function subset_via_zarr(;
     dataset_id::String,
     variable  = nothing,
     variables = nothing,
@@ -538,21 +538,21 @@ function _subset_via_zarr(;
     @info "  lon=[$minimum_longitude, $maximum_longitude]  lat=[$minimum_latitude, $maximum_latitude]"
     isnothing(start_datetime) || @info "  $start_datetime → $end_datetime"
 
-    token    = _get_token(username, password)
-    zarr_url = _zarr_url(dataset_id)
-    @info "  zarr=$zarr_url"
+    token = get_token(username, password)
+    url   = zarr_url(dataset_id)
+    @info "  zarr=$url"
 
-    zmeta = _load_zmeta(zarr_url)
+    zmeta = load_zmeta(url)
 
     @info "  Loading coordinates..."
-    longitudes = _load_coord_1d(zarr_url, zmeta, "longitude", token)
-    latitudes  = _load_coord_1d(zarr_url, zmeta, "latitude",  token)
+    longitudes = load_coordinate(url, zmeta, "longitude", token)
+    latitudes  = load_coordinate(url, zmeta, "latitude",  token)
     elev_key   = haskey(zmeta["metadata"], "elevation/.zarray") ? "elevation" : "depth"
-    depths     = _load_coord_1d(zarr_url, zmeta, elev_key, token)
+    depths     = load_coordinate(url, zmeta, elev_key, token)
 
-    longitude_indices = _range_in(longitudes, minimum_longitude, maximum_longitude)
-    latitude_indices  = _range_in(latitudes,  minimum_latitude,  maximum_latitude)
-    depth_indices     = _depth_range(depths,   minimum_depth,     maximum_depth)
+    longitude_indices = range_in(longitudes, minimum_longitude, maximum_longitude)
+    latitude_indices  = range_in(latitudes,  minimum_latitude,  maximum_latitude)
+    depth_indices     = depth_range(depths,   minimum_depth,     maximum_depth)
 
     isempty(longitude_indices) && error("No longitudes in [$minimum_longitude, $maximum_longitude]")
     isempty(latitude_indices)  && error("No latitudes in [$minimum_latitude, $maximum_latitude]")
@@ -564,10 +564,10 @@ function _subset_via_zarr(;
         ([0], [0.0])
     else
         @info "  Loading time axis..."
-        time_values = _load_coord_1d(zarr_url, zmeta, "time", nothing)
+        time_values = load_coordinate(url, zmeta, "time", nothing)
         t0 = DateTime(start_datetime)
         t1 = DateTime(end_datetime)
-        indices = _time_range(time_values, t0, t1)
+        indices = time_range(time_values, t0, t1)
         isempty(indices) && error("No time steps in [$start_datetime, $end_datetime]")
         @info "  $(length(indices)) time step(s)"
         (indices, time_values[indices .+ 1])
@@ -576,14 +576,14 @@ function _subset_via_zarr(;
     data = Dict{String,Array{Float32}}()
     for varname in variable_list
         @info "  Fetching $varname..."
-        meta = _parse_array_meta(zmeta, varname)
+        meta = parse_array_meta(zmeta, varname)
         if meta.ndim == 4
-            data[varname] = _fetch_4d(zarr_url, meta, varname,
-                                      time_indices, depth_indices,
-                                      latitude_indices, longitude_indices, token)
+            data[varname] = fetch_4d(url, meta, varname,
+                                     time_indices, depth_indices,
+                                     latitude_indices, longitude_indices, token)
         elseif meta.ndim == 3
-            data[varname] = _fetch_3d(zarr_url, meta, varname,
-                                      time_indices, latitude_indices, longitude_indices, token)
+            data[varname] = fetch_3d(url, meta, varname,
+                                     time_indices, latitude_indices, longitude_indices, token)
         else
             @warn "  Skipping $varname: unsupported ndim=$(meta.ndim)"
         end
@@ -603,9 +603,9 @@ function _subset_via_zarr(;
     end
 
     @info "  Writing $output_path..."
-    _write_nc(output_path, data, variable_list,
-              longitudes[longitude_indices], latitudes[latitude_indices],
-              depths_out, output_time_values)
+    write_nc(output_path, data, variable_list,
+             longitudes[longitude_indices], latitudes[latitude_indices],
+             depths_out, output_time_values)
 
     @info "  Done: $(round(filesize(output_path) / 1024 / 1024, digits=1)) MB"
     return output_path

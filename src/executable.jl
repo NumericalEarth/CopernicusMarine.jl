@@ -54,7 +54,7 @@ current platform and `version`.
 asset_url(version=TOOLBOX_VERSION) =
     "https://github.com/mercator-ocean/copernicus-marine-toolbox/releases/download/v$(version)/$(asset_name())"
 
-_executable_path() = joinpath(SCRATCH[], Sys.iswindows() ? "copernicusmarine.exe" : "copernicusmarine")
+executable_path() = joinpath(SCRATCH[], Sys.iswindows() ? "copernicusmarine.exe" : "copernicusmarine")
 
 """
     executable(; force=false)
@@ -63,7 +63,7 @@ Return the path to the standalone `copernicusmarine` executable, downloading it
 into a scratch directory on first use. Pass `force=true` to re-download.
 """
 function executable(; force::Bool=false)
-    exe = _executable_path()
+    exe = executable_path()
     if force || !isfile(exe)
         url = asset_url()
         @info "Downloading copernicusmarine v$(TOOLBOX_VERSION) from $(url) ..."
@@ -127,15 +127,24 @@ login(; kwargs...) = run(command("login", kwargs))
     describe(; kwargs...)
 
 Run `copernicusmarine describe` and return the catalogue as a parsed JSON object.
+Keyword arguments filter the catalogue, e.g. `describe(contains="Global Ocean")`.
 """
 function describe(; kwargs...)
     json = read(command("describe", kwargs), String)
     return JSON3.read(json)
 end
 
+"""
+    get(; kwargs...)
+
+Run `copernicusmarine get` to download the original data files of a dataset.
+Not exported to avoid clashing with `Base.get`; call as `CopernicusMarine.get`.
+"""
+get(; kwargs...) = run(command("get", kwargs))
+
 # ── Executable-based subset ────────────────────────────────────────────────────
 
-function _subset_via_executable(;
+function subset_via_executable(;
     dataset_id::String,
     variable  = nothing,
     variables = nothing,
@@ -203,7 +212,7 @@ Return `true` if a usable `copernicusmarine` executable is available.
 Checks `PATH` first, then attempts to auto-download the standalone binary.
 Returns `false` on ARM64 Linux (binary is x86_64 only) or if download fails.
 """
-function _has_executable()
+function has_executable()
     !isnothing(Sys.which("copernicusmarine")) && return true
     # ARM64 Linux: binary is x86_64-only and will not run
     Sys.islinux() && Sys.ARCH === :aarch64 && return false
