@@ -615,17 +615,16 @@ function subset_via_zarr(;
         end
     end
 
-    # geoChunked elevation is negative (elevation below sea level); normalise to
-    # positive-ascending depth for NumericalEarth compatibility.
+    # Normalise to positive-ascending depth for NumericalEarth compatibility.
+    # The raw coordinate may be negative-ascending elevation, positive-descending
+    # depth, or already positive-ascending depth depending on which Zarr key was
+    # resolved; sort explicitly on magnitude instead of assuming a convention.
     selected_depths = depths[depth_indices]
-    if !isempty(selected_depths) && selected_depths[1] < 0
-        depths_out = abs.(selected_depths[end:-1:1])
-        for varname in variable_list
-            haskey(data, varname) || continue
-            ndims(data[varname]) == 4 && (data[varname] = data[varname][:, :, end:-1:1, :])
-        end
-    else
-        depths_out = selected_depths
+    depth_order = sortperm(abs.(selected_depths))
+    depths_out  = abs.(selected_depths)[depth_order]
+    for varname in variable_list
+        haskey(data, varname) || continue
+        ndims(data[varname]) == 4 && (data[varname] = data[varname][:, :, depth_order, :])
     end
 
     @info "  Writing $output_path..."
