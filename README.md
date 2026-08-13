@@ -112,3 +112,5 @@ Other dataset IDs can still be used on ARM64 — the backend falls back to STAC 
 will attempt to fetch the dataset's geoChunked Zarr store. If the store layout matches the
 supported format the download will succeed; add the URL to `KNOWN_ZARR_URLS` in
 `src/zarr_backend.jl` to avoid the discovery overhead on future calls.
+
+Browse the full CMEMS catalogue at https://stac.marine.copernicus.eu to find other dataset IDs.

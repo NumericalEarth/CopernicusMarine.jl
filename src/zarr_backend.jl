@@ -256,7 +256,7 @@ function depth_range(depths, minimum_depth, maximum_depth)
     lo = isnothing(minimum_depth) ? -Inf : Float64(minimum_depth)
     hi = isnothing(maximum_depth) ?  Inf : Float64(maximum_depth)
     # Elevation convention (negative, e.g. -5727 … -0.49): invert lo/hi
-    if !isempty(depths) && depths[end] < 0
+    return if !isempty(depths) && depths[end] < 0
         searchsortedfirst(depths, -hi) : searchsortedlast(depths, -lo)
     else
         searchsortedfirst(depths, lo) : searchsortedlast(depths, hi)
@@ -312,7 +312,7 @@ function overlap_ranges(chunk_start, chunk_size, global_start, global_stop, tota
     return actual, src, dst
 end
 
-# Returns (Nlon, Nlat, Ndepth, Ntime) for NCDatasets column-major layout.
+# Returns (Nx, Ny, Ndepth, Ntime) for NCDatasets column-major layout.
 function fetch_4d(url::String, meta::ZarrArrayMeta, varname::String,
                   time_indices::Vector{Int},
                   depth_indices::AbstractRange{Int},
@@ -320,13 +320,13 @@ function fetch_4d(url::String, meta::ZarrArrayMeta, varname::String,
                   longitude_indices::AbstractRange{Int},
                   token::Union{String, Nothing})
     chunk_time, chunk_depth, chunk_lat, chunk_lon = meta.chunks
-    _, Ndepth_total, Nlat_total, Nlon_total       = meta.shape
+    _, Ndepth_total, Ny_total, Nx_total = meta.shape
 
     Ntime  = length(time_indices)
     Ndepth = length(depth_indices)
-    Nlat   = length(latitude_indices)
-    Nlon   = length(longitude_indices)
-    out    = fill(NaN32, Nlon, Nlat, Ndepth, Ntime)
+    Ny     = length(latitude_indices)
+    Nx     = length(longitude_indices)
+    out    = fill(NaN32, Nx, Ny, Ndepth, Ntime)
 
     lat_start = first(latitude_indices);  lat_stop = last(latitude_indices)
     lon_start = first(longitude_indices); lon_stop = last(longitude_indices)
@@ -341,10 +341,10 @@ function fetch_4d(url::String, meta::ZarrArrayMeta, varname::String,
         lon_chunk in lon_chunk_start:lon_chunk_stop
 
         act_lat, src_lat, dst_lat = overlap_ranges(lat_chunk, chunk_lat,
-                                                   lat_start, lat_stop, Nlat_total)
+                                                   lat_start, lat_stop, Ny_total)
         isnothing(act_lat) && continue
         act_lon, src_lon, dst_lon = overlap_ranges(lon_chunk, chunk_lon,
-                                                   lon_start, lon_stop, Nlon_total)
+                                                   lon_start, lon_stop, Nx_total)
         isnothing(act_lon) && continue
 
         t_chunk = div(ti, chunk_time)
@@ -373,7 +373,7 @@ function fetch_4d(url::String, meta::ZarrArrayMeta, varname::String,
     return out
 end
 
-# Returns (Nlon, Nlat, Ntime) for 3-D variables like zos.
+# Returns (Nx, Ny, Ntime) for 3-D variables like zos.
 function fetch_3d(url::String, meta::ZarrArrayMeta, varname::String,
                   time_indices::Vector{Int},
                   latitude_indices::AbstractRange{Int},
@@ -382,13 +382,13 @@ function fetch_3d(url::String, meta::ZarrArrayMeta, varname::String,
     @assert meta.ndim == 3 "Expected 3-D variable, got ndim=$(meta.ndim)"
 
     # parse_array_meta left-pads to 4 dims; real dims at indices 2:4
-    Ntime_total, Nlat_total, Nlon_total = meta.shape[2], meta.shape[3], meta.shape[4]
+    Ntime_total, Ny_total, Nx_total = meta.shape[2], meta.shape[3], meta.shape[4]
     chunk_time, chunk_lat, chunk_lon    = meta.chunks[2], meta.chunks[3], meta.chunks[4]
 
     Ntime = length(time_indices)
-    Nlat  = length(latitude_indices)
-    Nlon  = length(longitude_indices)
-    out   = fill(NaN32, Nlon, Nlat, Ntime)
+    Ny    = length(latitude_indices)
+    Nx    = length(longitude_indices)
+    out   = fill(NaN32, Nx, Ny, Ntime)
 
     lat_start = first(latitude_indices);  lat_stop = last(latitude_indices)
     lon_start = first(longitude_indices); lon_stop = last(longitude_indices)
@@ -403,10 +403,10 @@ function fetch_3d(url::String, meta::ZarrArrayMeta, varname::String,
         lon_chunk in lon_chunk_start:lon_chunk_stop
 
         act_lat, src_lat, dst_lat = overlap_ranges(lat_chunk, chunk_lat,
-                                                   lat_start, lat_stop, Nlat_total)
+                                                   lat_start, lat_stop, Ny_total)
         isnothing(act_lat) && continue
         act_lon, src_lon, dst_lon = overlap_ranges(lon_chunk, chunk_lon,
-                                                   lon_start, lon_stop, Nlon_total)
+                                                   lon_start, lon_stop, Nx_total)
         isnothing(act_lon) && continue
 
         t_chunk = div(ti, chunk_time)
