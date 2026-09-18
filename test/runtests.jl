@@ -37,6 +37,27 @@ const CM = CopernicusMarine
             "--overwrite",
             "--output-directory", "data",
         ]
+
+        # Regression: a bare NamedTuple (not wrapped in `pairs`) iterates its
+        # *values* rather than key=>value pairs, silently mangling string/vector
+        # fields and throwing a BoundsError on the first scalar Real field. This
+        # is the exact `cli_kwargs` shape `subset_via_executable` builds.
+        cli_kwargs = (
+            dataset_id         = "cmems_mod_glo_phy_my_0.083deg_P1D-m",
+            variable            = ["thetao", "so"],
+            minimum_longitude   = 3.0,
+            maximum_longitude   = 6.0,
+            minimum_depth       = nothing,
+            force_download      = true,
+        )
+        @test CM.cli_arguments(pairs(cli_kwargs)) == [
+            "--dataset-id", "cmems_mod_glo_phy_my_0.083deg_P1D-m",
+            "--variable", "thetao", "--variable", "so",
+            "--minimum-longitude", "3.0",
+            "--maximum-longitude", "6.0",
+            "--force-download",
+        ]
+        @test_throws BoundsError CM.cli_arguments(cli_kwargs)
     end
 
     @testset "asset selection" begin
