@@ -43,5 +43,10 @@ jobs:
 
       - uses: julia-actions/julia-buildpkg@v1
 
+      # All tests including download tests (if credentials available; only on
+      # main, not on forks, since GitHub does not expose secrets to fork PRs)
       - uses: julia-actions/julia-runtest@v1
+        env:
+          COPERNICUS_USERNAME: ${{ secrets.COPERNICUS_USERNAME }}
+          COPERNICUS_PASSWORD: ${{ secrets.COPERNICUS_PASSWORD }}
 

@@ -1,8 +1,15 @@
 using CopernicusMarine
 using Test
 using Dates
+using NCDatasets: NCDataset
 
 const CM = CopernicusMarine
+
+const CM_USERNAME = get(ENV, "COPERNICUS_USERNAME",
+                     get(ENV, "COPERNICUSMARINE_SERVICE_USERNAME", ""))
+const CM_PASSWORD = get(ENV, "COPERNICUS_PASSWORD",
+                     get(ENV, "COPERNICUSMARINE_SERVICE_PASSWORD", ""))
+const HAS_CM_CREDENTIALS = !isempty(CM_USERNAME) && !isempty(CM_PASSWORD)
 
 @testset "CopernicusMarine.jl" begin
 
@@ -202,6 +209,84 @@ const CM = CopernicusMarine
         # BGC uses a different bucket (geo-018) from physics (geo-025)
         @test occursin("mdl-arco-geo-018", CM.zarr_url("cmems_mod_glo_bgc_my_0.25deg_P1D-m"))
         @test occursin("mdl-arco-geo-025", CM.zarr_url("cmems_mod_glo_phy_my_0.083deg_P1D-m"))
+    end
+
+    @testset "Zarr download integration test" begin
+        # Only run if CMEMS credentials are available
+        if HAS_CM_CREDENTIALS
+            @info "CMEMS credentials found - running Zarr download test"
+            out = joinpath(tempdir(), "cmtest_$(getpid())_zarr.nc")
+            try
+                path = CM.subset_via_zarr(
+                    dataset_id        = "cmems_mod_glo_phy_my_0.083deg_P1D-m",
+                    variable          = ["thetao"],
+                    username          = CM_USERNAME,
+                    password          = CM_PASSWORD,
+                    output_directory  = tempdir(),
+                    output_filename   = basename(out),
+                    minimum_longitude = 3.0,
+                    maximum_longitude = 4.0,
+                    minimum_latitude  = -55.0,
+                    maximum_latitude  = -54.0,
+                    minimum_depth     = 0.0,
+                    maximum_depth     = 10.0,
+                    start_datetime    = "2000-01-01T00:00:00",
+                    end_datetime      = "2000-01-01T00:00:00",
+                    skip_existing     = false,
+                )
+                @test isfile(path)
+                @test filesize(path) > 0
+                NCDataset(path) do ds
+                    @test haskey(ds, "thetao")
+                    @test !all(ismissing, ds["thetao"][:, :, :, :])
+                end
+                @info "Successfully downloaded Zarr test data" path
+            finally
+                rm(out; force=true)
+            end
+        else
+            @info "Skipping Zarr download test - no CMEMS credentials available"
+            @test_skip true
+        end
+    end
+
+    @testset "Executable download integration test" begin
+        # Only run if CMEMS credentials and a usable toolbox binary are available
+        if HAS_CM_CREDENTIALS && CM.has_executable()
+            @info "CMEMS credentials found - running executable download test"
+            out = joinpath(tempdir(), "cmtest_$(getpid())_executable.nc")
+            try
+                path = CM.subset_via_executable(
+                    dataset_id        = "cmems_mod_glo_phy_my_0.083deg_P1D-m",
+                    variable          = ["thetao"],
+                    username          = CM_USERNAME,
+                    password          = CM_PASSWORD,
+                    output_directory  = tempdir(),
+                    output_filename   = basename(out),
+                    minimum_longitude = 3.0,
+                    maximum_longitude = 4.0,
+                    minimum_latitude  = -55.0,
+                    maximum_latitude  = -54.0,
+                    minimum_depth     = 0.0,
+                    maximum_depth     = 10.0,
+                    start_datetime    = "2000-01-01T00:00:00",
+                    end_datetime      = "2000-01-01T00:00:00",
+                    skip_existing     = false,
+                )
+                @test isfile(path)
+                @test filesize(path) > 0
+                NCDataset(path) do ds
+                    @test haskey(ds, "thetao")
+                    @test !all(ismissing, ds["thetao"][:, :, :, :])
+                end
+                @info "Successfully downloaded executable test data" path
+            finally
+                rm(out; force=true)
+            end
+        else
+            @info "Skipping executable download test - no CMEMS credentials or no usable binary available"
+            @test_skip true
+        end
     end
 
 end
