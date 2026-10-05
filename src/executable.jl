@@ -194,7 +194,7 @@ function subset_via_executable(;
 
     # Prefer PATH-installed binary; fall back to auto-downloaded one
     exe = something(Sys.which("copernicusmarine"), executable())
-    cmd = Cmd(vcat([exe, "subset"], cli_arguments(cli_kwargs)))
+    cmd = Cmd(vcat([exe, "subset"], cli_arguments(pairs(cli_kwargs))))
 
     # Pass credentials via env vars to avoid shell-history exposure
     withenv("COPERNICUSMARINE_SERVICE_USERNAME" => username,
