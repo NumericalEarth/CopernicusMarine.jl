@@ -164,6 +164,17 @@ const HAS_CM_CREDENTIALS = !isempty(CM_USERNAME) && !isempty(CM_PASSWORD)
         @test dst4 == 1:2
     end
 
+    @testset "Zarr: chunk_tile selects the in-chunk time slab" begin
+        # Chunk (time 3, depth 2, lat 2, lon 4): value = 1000t + 100d + 10lat + lon (0-based), C order
+        values = Float32[1000t + 100d + 10y + x for x in 0:3, y in 0:1, d in 0:1, t in 0:2][:]
+        raw  = collect(reinterpret(UInt8, values))
+        meta = CM.ZarrArrayMeta((3, 2, 2, 4), 4, (3, 2, 2, 4), "<f4", nothing, nothing, nothing, nothing)
+        tile = CM.chunk_tile(raw, meta, 2 * 2 + 1, 2, 4)
+        @test size(tile) == (4, 2)
+        @test tile[1, 1] == 2100
+        @test tile[4, 2] == 2113
+    end
+
     @testset "Zarr: _depth_range" begin
         # Positive-down convention (timeChunked style): [0.494, 1.541, 2.646, 5.079, 10.0]
         depths_pos = Float64[0.494, 1.541, 2.646, 5.079, 10.0]
