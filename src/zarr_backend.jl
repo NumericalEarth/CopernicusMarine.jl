@@ -180,7 +180,8 @@ function fetch_raw(url::String, key::String, token::Union{String,Nothing})
         end
         (resp.status == 404 || resp.status == 403) && return nothing
         resp.status < 300 && return resp.body
-        resp.status < 500 && error("HTTP $(resp.status) for $key")
+        retryable = resp.status >= 500 || resp.status == 408 || resp.status == 429
+        retryable || error("HTTP $(resp.status) for $key")
         attempt < 5 && sleep(10 * attempt)
         attempt == 5 && error("HTTP $(resp.status) for $key after 5 attempts")
     end
@@ -279,8 +280,7 @@ end
 
 struct ChunkJob4D
     key        :: String
-    actual_lon :: Int
-    actual_lat :: Int
+    slab       :: Int
     src_lon    :: UnitRange{Int}
     src_lat    :: UnitRange{Int}
     dst_lon    :: UnitRange{Int}
@@ -291,13 +291,20 @@ end
 
 struct ChunkJob3D
     key        :: String
-    actual_lon :: Int
-    actual_lat :: Int
+    slab       :: Int
     src_lon    :: UnitRange{Int}
     src_lat    :: UnitRange{Int}
     dst_lon    :: UnitRange{Int}
     dst_lat    :: UnitRange{Int}
     it         :: Int
+end
+
+# Zarr v2 stores every chunk full-size in C order; `slab` is the 0-based (lat × lon) plane within it.
+function chunk_tile(raw::Vector{UInt8}, meta::ZarrArrayMeta, slab, chunk_lat, chunk_lon)
+    values = decode_chunk(raw, meta)
+    Nplane = chunk_lat * chunk_lon
+    # Zarr C-order (lat × lon) → Julia column-major (lon × lat)
+    return reshape(values[(slab * Nplane + 1):((slab + 1) * Nplane)], chunk_lon, chunk_lat)
 end
 
 function overlap_ranges(chunk_start, chunk_size, global_start, global_stop, total)
@@ -349,8 +356,9 @@ function fetch_4d(url::String, meta::ZarrArrayMeta, varname::String,
 
         t_chunk = div(ti, chunk_time)
         d_chunk = div(di - 1, chunk_depth)
+        slab = mod(ti, chunk_time) * chunk_depth + mod(di - 1, chunk_depth)
         key = "$varname/$t_chunk.$d_chunk.$lat_chunk.$lon_chunk"
-        push!(jobs, ChunkJob4D(key, act_lon, act_lat, src_lon, src_lat,
+        push!(jobs, ChunkJob4D(key, slab, src_lon, src_lat,
                                dst_lon, dst_lat, id, it))
     end
 
@@ -358,9 +366,7 @@ function fetch_4d(url::String, meta::ZarrArrayMeta, varname::String,
     results = asyncmap(jobs; ntasks=min(32, length(jobs))) do job
         raw = fetch_raw(url, job.key, token)
         isnothing(raw) && return nothing
-        # Zarr C-order (lat × lon) → Julia column-major (lon × lat)
-        tile = reshape(decode_chunk(raw, meta)[1:(job.actual_lon * job.actual_lat)],
-                       job.actual_lon, job.actual_lat)
+        tile = chunk_tile(raw, meta, job.slab, chunk_lat, chunk_lon)
         (slice   = tile[job.src_lon, job.src_lat],
          dst_lon = job.dst_lon, dst_lat = job.dst_lat,
          id      = job.id,      it      = job.it)
@@ -411,7 +417,7 @@ function fetch_3d(url::String, meta::ZarrArrayMeta, varname::String,
 
         t_chunk = div(ti, chunk_time)
         key = "$varname/$t_chunk.$lat_chunk.$lon_chunk"
-        push!(jobs, ChunkJob3D(key, act_lon, act_lat, src_lon, src_lat,
+        push!(jobs, ChunkJob3D(key, mod(ti, chunk_time), src_lon, src_lat,
                                dst_lon, dst_lat, it))
     end
 
@@ -419,8 +425,7 @@ function fetch_3d(url::String, meta::ZarrArrayMeta, varname::String,
     results = asyncmap(jobs; ntasks=min(32, length(jobs))) do job
         raw = fetch_raw(url, job.key, token)
         isnothing(raw) && return nothing
-        tile = reshape(decode_chunk(raw, meta)[1:(job.actual_lon * job.actual_lat)],
-                       job.actual_lon, job.actual_lat)
+        tile = chunk_tile(raw, meta, job.slab, chunk_lat, chunk_lon)
         (slice   = tile[job.src_lon, job.src_lat],
          dst_lon = job.dst_lon, dst_lat = job.dst_lat,
          it      = job.it)
