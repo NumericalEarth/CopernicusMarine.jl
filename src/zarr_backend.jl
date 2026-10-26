@@ -255,18 +255,35 @@ end
 
 # ─── Index helpers ─────────────────────────────────────────────────────────────
 
-range_in(coords, lo, hi) =
-    searchsortedfirst(coords, Float64(lo)) : searchsortedlast(coords, Float64(hi))
+# Indices of the ascending `coords` selected for [lo, hi], following the toolbox's
+# `coordinates_selection_method`: points within the bounds ("inside"), the smallest
+# range enclosing them ("outside"), or the points nearest to each bound ("nearest").
+coordinate_range(coords, lo, hi, method::String) = coordinate_range(coords, Float64(lo), Float64(hi), Val(Symbol(method)))
 
-function depth_range(depths, minimum_depth, maximum_depth)
+coordinate_range(coords, lo, hi, ::Val{:inside}) =
+    searchsortedfirst(coords, lo) : searchsortedlast(coords, hi)
+
+coordinate_range(coords, lo, hi, ::Val{:outside}) =
+    max(1, searchsortedlast(coords, lo)) : min(length(coords), searchsortedfirst(coords, hi))
+
+coordinate_range(coords, lo, hi, ::Val{:nearest}) =
+    nearest_index(coords, lo) : nearest_index(coords, hi)
+
+coordinate_range(coords, lo, hi, ::Val{method}) where method =
+    throw(ArgumentError("coordinates_selection_method = \"$method\" is not supported by the Zarr backend; " *
+                        "use \"inside\", \"outside\" or \"nearest\""))
+
+nearest_index(coords, x) = argmin(abs.(coords .- clamp(x, first(coords), last(coords))))
+
+function depth_range(depths, minimum_depth, maximum_depth, method)
     isnothing(minimum_depth) && isnothing(maximum_depth) && return 1:length(depths)
     lo = isnothing(minimum_depth) ? -Inf : Float64(minimum_depth)
     hi = isnothing(maximum_depth) ?  Inf : Float64(maximum_depth)
     # Elevation convention (negative, e.g. -5727 … -0.49): invert lo/hi
     return if !isempty(depths) && depths[end] < 0
-        searchsortedfirst(depths, -hi) : searchsortedlast(depths, -lo)
+        coordinate_range(depths, -hi, -lo, method)
     else
-        searchsortedfirst(depths, lo) : searchsortedlast(depths, hi)
+        coordinate_range(depths, lo, hi, method)
     end
 end
 
@@ -596,9 +613,10 @@ function subset_via_zarr(;
     elev_key   = haskey(zmeta["metadata"], "elevation/.zarray") ? "elevation" : "depth"
     depths     = load_coordinate(url, zmeta, elev_key, token)
 
-    longitude_indices = range_in(longitudes, minimum_longitude, maximum_longitude)
-    latitude_indices  = range_in(latitudes,  minimum_latitude,  maximum_latitude)
-    depth_indices     = depth_range(depths,   minimum_depth,     maximum_depth)
+    method = coordinates_selection_method
+    longitude_indices = coordinate_range(longitudes, minimum_longitude, maximum_longitude, method)
+    latitude_indices  = coordinate_range(latitudes,  minimum_latitude,  maximum_latitude,  method)
+    depth_indices     = depth_range(depths,          minimum_depth,     maximum_depth,     method)
 
     isempty(longitude_indices) && error("No longitudes in [$minimum_longitude, $maximum_longitude]")
     isempty(latitude_indices)  && error("No latitudes in [$minimum_latitude, $maximum_latitude]")

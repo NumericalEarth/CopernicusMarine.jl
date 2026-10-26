@@ -179,15 +179,41 @@ const HAS_CM_CREDENTIALS = !isempty(CM_USERNAME) && !isempty(CM_PASSWORD)
         # Positive-down convention (timeChunked style): [0.494, 1.541, 2.646, 5.079, 10.0]
         depths_pos = Float64[0.494, 1.541, 2.646, 5.079, 10.0]
         # searchsortedlast(v, 5.0) stops before 5.079, so max depth 5.0 → indices 1:3
-        @test CM.depth_range(depths_pos, 0.0, 5.0) == 1:3
-        @test CM.depth_range(depths_pos, nothing, nothing) == 1:5
+        @test CM.depth_range(depths_pos, 0.0, 5.0, "inside") == 1:3
+        @test CM.depth_range(depths_pos, nothing, nothing, "inside") == 1:5
+        # "outside" reaches 5.079 to enclose 5.0
+        @test CM.depth_range(depths_pos, 0.0, 5.0, "outside") == 1:4
+        @test CM.depth_range(depths_pos, 0.0, nothing, "outside") == 1:5
 
         # Negative elevation convention (geoChunked): [-10.0, -5.079, -2.646, -1.541, -0.494]
         # depth range [0, 5] maps to elevation range [-5, 0]
         # searchsortedfirst(v, -5.0) skips -5.079 (< -5.0), returns index 3 (-2.646)
         depths_neg = Float64[-10.0, -5.079, -2.646, -1.541, -0.494]
-        @test CM.depth_range(depths_neg, 0.0, 5.0) == 3:5
-        @test CM.depth_range(depths_neg, nothing, nothing) == 1:5
+        @test CM.depth_range(depths_neg, 0.0, 5.0, "inside") == 3:5
+        @test CM.depth_range(depths_neg, nothing, nothing, "inside") == 1:5
+        @test CM.depth_range(depths_neg, 0.0, 5.0, "outside") == 2:5
+    end
+
+    @testset "Zarr: coordinates_selection_method" begin
+        longitudes = collect(0.0:0.25:2.0)
+
+        @test CM.coordinate_range(longitudes, 0.3, 1.1, "inside")  == 3:5
+        @test CM.coordinate_range(longitudes, 0.3, 1.1, "outside") == 2:6
+        @test CM.coordinate_range(longitudes, 0.3, 1.1, "nearest") == 2:5
+
+        # Bounds on grid points select the same points either way
+        @test CM.coordinate_range(longitudes, 0.5, 1.0, "inside")  == 3:5
+        @test CM.coordinate_range(longitudes, 0.5, 1.0, "outside") == 3:5
+
+        # A single point, as NumericalEarth requests for a nearest-neighbour column
+        @test CM.coordinate_range(longitudes, 0.6, 0.6, "inside")  == 4:3
+        @test CM.coordinate_range(longitudes, 0.6, 0.6, "nearest") == 3:3
+
+        # Bounds past the ends are clamped to the available coordinates
+        @test CM.coordinate_range(longitudes, -1.0, 3.0, "outside") == 1:9
+        @test CM.coordinate_range(longitudes, -1.0, 3.0, "nearest") == 1:9
+
+        @test_throws ArgumentError CM.coordinate_range(longitudes, 0.3, 1.1, "strict-inside")
     end
 
     @testset "Zarr: _time_range" begin
