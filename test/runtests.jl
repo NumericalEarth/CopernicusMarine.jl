@@ -222,6 +222,22 @@ const HAS_CM_CREDENTIALS = !isempty(CM_USERNAME) && !isempty(CM_PASSWORD)
         @test occursin("mdl-arco-geo-025", CM.zarr_url("cmems_mod_glo_phy_my_0.083deg_P1D-m"))
     end
 
+    @testset "subset reads credentials from ENV by default" begin
+        # The module defines its own `get(; kwargs...)`, which must not shadow `Base.get` here
+        mktempdir() do dir
+            touch(joinpath(dir, "existing.nc"))
+            path = CM.subset(dataset_id        = "cmems_mod_glo_phy_my_0.083deg_P1D-m",
+                             variable          = ["thetao"],
+                             output_directory  = dir,
+                             output_filename   = "existing.nc",
+                             minimum_longitude = 3.0,
+                             maximum_longitude = 4.0,
+                             minimum_latitude  = -55.0,
+                             maximum_latitude  = -54.0)
+            @test path == joinpath(dir, "existing.nc")
+        end
+    end
+
     @testset "Zarr: plane chunk keys" begin
         @test CM.plane_chunk_key("zos", 3, 4, 1, 2) == "zos/4.1.2"
         @test CM.plane_chunk_key("deptho", 2, 0, 1, 2) == "deptho/1.2"
