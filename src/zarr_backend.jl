@@ -64,7 +64,10 @@ const KNOWN_ZARR_URLS = Dict{String,String}(
 
 const CONFIG_URL = "https://stac.marine.copernicus.eu/clients-config-v1"
 
-function discover_zarr_url(dataset_id::String)
+holds_variables(url, variables) =
+    all(v -> haskey(load_zmeta(url)["metadata"], v * "/.zarray"), variables)
+
+function discover_zarr_url(dataset_id::String, variables=String[])
     config      = JSON3.read(HTTP.get(CONFIG_URL; status_exception=true, readtimeout=30).body)
     stac_root   = String(config["catalogues"][1]["stacRoot"])
     mapping_url = String(config["catalogues"][1]["idMapping"])
@@ -89,23 +92,26 @@ function discover_zarr_url(dataset_id::String)
             dataset_resp.status >= 300 && continue
             dataset = JSON3.read(dataset_resp.body)
 
-            geo_url, time_url = nothing, nothing
+            geo_url, time_url, static_url = nothing, nothing, nothing
             for (_, asset) in pairs(dataset["assets"])
                 asset_href = haskey(asset, "href") ? String(asset["href"]) : ""
-                contains(asset_href, "geoChunked")  && (geo_url  = String(asset_href))
-                contains(asset_href, "timeChunked") && (time_url = String(asset_href))
+                contains(asset_href, "geoChunked")  && (geo_url    = String(asset_href))
+                contains(asset_href, "timeChunked") && (time_url   = String(asset_href))
+                endswith(asset_href, "static.zarr") && (static_url = String(asset_href))
             end
             # geoChunked has all depth levels (incl. ~0.5 m); prefer it
             !isnothing(geo_url)  && return geo_url
             !isnothing(time_url) && return time_url
+            # Static datasets are split into parts (coords, bathy, mdt), each with its own store
+            !isnothing(static_url) && holds_variables(static_url, variables) && return static_url
         end
     end
-    error("No geoChunked or timeChunked Zarr found for '$dataset_id'")
+    error("No geoChunked, timeChunked or static Zarr holding $variables found for '$dataset_id'")
 end
 
-function zarr_url(dataset_id::String)
+function zarr_url(dataset_id::String, variables=String[])
     haskey(KNOWN_ZARR_URLS, dataset_id) && return KNOWN_ZARR_URLS[dataset_id]
-    return discover_zarr_url(dataset_id)
+    return discover_zarr_url(dataset_id, variables)
 end
 
 # ─── Zarr metadata ─────────────────────────────────────────────────────────────
@@ -379,13 +385,17 @@ function fetch_4d(url::String, meta::ZarrArrayMeta, varname::String,
     return out
 end
 
-# Returns (Nx, Ny, Ntime) for 3-D variables like zos.
+# Chunk keys of (time, lat, lon) variables carry the time chunk; static (lat, lon) ones do not.
+plane_chunk_key(varname, ndim, t_chunk, lat_chunk, lon_chunk) =
+    ndim == 3 ? "$varname/$t_chunk.$lat_chunk.$lon_chunk" : "$varname/$lat_chunk.$lon_chunk"
+
+# Returns (Nx, Ny, Ntime) for 3-D variables like zos, and (Nx, Ny, 1) for 2-D ones like deptho.
 function fetch_3d(url::String, meta::ZarrArrayMeta, varname::String,
                   time_indices::Vector{Int},
                   latitude_indices::AbstractRange{Int},
                   longitude_indices::AbstractRange{Int},
                   token::Union{String, Nothing})
-    @assert meta.ndim == 3 "Expected 3-D variable, got ndim=$(meta.ndim)"
+    @assert meta.ndim in (2, 3) "Expected 2-D or 3-D variable, got ndim=$(meta.ndim)"
 
     # parse_array_meta left-pads to 4 dims; real dims at indices 2:4
     Ntime_total, Ny_total, Nx_total = meta.shape[2], meta.shape[3], meta.shape[4]
@@ -416,7 +426,7 @@ function fetch_3d(url::String, meta::ZarrArrayMeta, varname::String,
         isnothing(act_lon) && continue
 
         t_chunk = div(ti, chunk_time)
-        key = "$varname/$t_chunk.$lat_chunk.$lon_chunk"
+        key = plane_chunk_key(varname, meta.ndim, t_chunk, lat_chunk, lon_chunk)
         push!(jobs, ChunkJob3D(key, mod(ti, chunk_time), src_lon, src_lat,
                                dst_lon, dst_lat, it))
     end
@@ -515,6 +525,11 @@ function write_nc(path, data, variable_list,
                            fillvalue = NaN32)
                 v[:, :, :] = arr
                 v
+            elseif ndims(arr) == 2
+                v = defVar(ds, varname, Float32, ("longitude", "latitude"),
+                           fillvalue = NaN32)
+                v[:, :] = arr
+                v
             else
                 nothing
             end
@@ -570,7 +585,7 @@ function subset_via_zarr(;
     isnothing(start_datetime) || @info "  $start_datetime → $end_datetime"
 
     token = get_token(username, password)
-    url   = zarr_url(dataset_id)
+    url   = zarr_url(dataset_id, variable_list)
     @info "  zarr=$url"
 
     zmeta = load_zmeta(url)
@@ -615,6 +630,9 @@ function subset_via_zarr(;
         elseif meta.ndim == 3
             data[varname] = fetch_3d(url, meta, varname,
                                      time_indices, latitude_indices, longitude_indices, token)
+        elseif meta.ndim == 2
+            data[varname] = fetch_3d(url, meta, varname,
+                                     [0], latitude_indices, longitude_indices, token)[:, :, 1]
         else
             @warn "  Skipping $varname: unsupported ndim=$(meta.ndim)"
         end

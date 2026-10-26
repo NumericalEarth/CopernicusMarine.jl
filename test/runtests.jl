@@ -1,7 +1,7 @@
 using CopernicusMarine
 using Test
 using Dates
-using NCDatasets: NCDataset
+using NCDatasets: NCDataset, dimnames
 
 const CM = CopernicusMarine
 
@@ -222,6 +222,11 @@ const HAS_CM_CREDENTIALS = !isempty(CM_USERNAME) && !isempty(CM_PASSWORD)
         @test occursin("mdl-arco-geo-025", CM.zarr_url("cmems_mod_glo_phy_my_0.083deg_P1D-m"))
     end
 
+    @testset "Zarr: plane chunk keys" begin
+        @test CM.plane_chunk_key("zos", 3, 4, 1, 2) == "zos/4.1.2"
+        @test CM.plane_chunk_key("deptho", 2, 0, 1, 2) == "deptho/1.2"
+    end
+
     @testset "Zarr download integration test" begin
         # Only run if CMEMS credentials are available
         if HAS_CM_CREDENTIALS
@@ -254,6 +259,33 @@ const HAS_CM_CREDENTIALS = !isempty(CM_USERNAME) && !isempty(CM_PASSWORD)
                 @info "Successfully downloaded Zarr test data" path
             finally
                 rm(out; force=true)
+            end
+
+            # Static datasets are split into parts; deptho lives in the bathymetry part
+            static_out = joinpath(tempdir(), "cmtest_$(getpid())_zarr_static.nc")
+            try
+                path = CM.subset_via_zarr(
+                    dataset_id        = "cmems_mod_glo_phy_my_0.083deg_static",
+                    variable          = ["deptho"],
+                    username          = CM_USERNAME,
+                    password          = CM_PASSWORD,
+                    output_directory  = tempdir(),
+                    output_filename   = basename(static_out),
+                    minimum_longitude = 3.0,
+                    maximum_longitude = 4.0,
+                    minimum_latitude  = -55.0,
+                    maximum_latitude  = -54.0,
+                    skip_existing     = false,
+                )
+                NCDataset(path) do ds
+                    @test dimnames(ds["deptho"]) == ("longitude", "latitude")
+                    deptho = ds["deptho"][:, :]
+                    @test size(deptho) == (ds.dim["longitude"], ds.dim["latitude"])
+                    @test all(d -> ismissing(d) || d > 0, deptho)
+                    @test !all(ismissing, deptho)
+                end
+            finally
+                rm(static_out; force=true)
             end
         else
             @info "Skipping Zarr download test - no CMEMS credentials available"
