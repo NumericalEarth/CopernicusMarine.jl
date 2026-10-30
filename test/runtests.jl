@@ -1,7 +1,7 @@
 using CopernicusMarine
 using Test
 using Dates
-using NCDatasets: NCDataset
+using NCDatasets: NCDataset, dimnames
 
 const CM = CopernicusMarine
 
@@ -179,15 +179,41 @@ const HAS_CM_CREDENTIALS = !isempty(CM_USERNAME) && !isempty(CM_PASSWORD)
         # Positive-down convention (timeChunked style): [0.494, 1.541, 2.646, 5.079, 10.0]
         depths_pos = Float64[0.494, 1.541, 2.646, 5.079, 10.0]
         # searchsortedlast(v, 5.0) stops before 5.079, so max depth 5.0 → indices 1:3
-        @test CM.depth_range(depths_pos, 0.0, 5.0) == 1:3
-        @test CM.depth_range(depths_pos, nothing, nothing) == 1:5
+        @test CM.depth_range(depths_pos, 0.0, 5.0, "inside") == 1:3
+        @test CM.depth_range(depths_pos, nothing, nothing, "inside") == 1:5
+        # "outside" reaches 5.079 to enclose 5.0
+        @test CM.depth_range(depths_pos, 0.0, 5.0, "outside") == 1:4
+        @test CM.depth_range(depths_pos, 0.0, nothing, "outside") == 1:5
 
         # Negative elevation convention (geoChunked): [-10.0, -5.079, -2.646, -1.541, -0.494]
         # depth range [0, 5] maps to elevation range [-5, 0]
         # searchsortedfirst(v, -5.0) skips -5.079 (< -5.0), returns index 3 (-2.646)
         depths_neg = Float64[-10.0, -5.079, -2.646, -1.541, -0.494]
-        @test CM.depth_range(depths_neg, 0.0, 5.0) == 3:5
-        @test CM.depth_range(depths_neg, nothing, nothing) == 1:5
+        @test CM.depth_range(depths_neg, 0.0, 5.0, "inside") == 3:5
+        @test CM.depth_range(depths_neg, nothing, nothing, "inside") == 1:5
+        @test CM.depth_range(depths_neg, 0.0, 5.0, "outside") == 2:5
+    end
+
+    @testset "Zarr: coordinates_selection_method" begin
+        longitudes = collect(0.0:0.25:2.0)
+
+        @test CM.coordinate_range(longitudes, 0.3, 1.1, "inside")  == 3:5
+        @test CM.coordinate_range(longitudes, 0.3, 1.1, "outside") == 2:6
+        @test CM.coordinate_range(longitudes, 0.3, 1.1, "nearest") == 2:5
+
+        # Bounds on grid points select the same points either way
+        @test CM.coordinate_range(longitudes, 0.5, 1.0, "inside")  == 3:5
+        @test CM.coordinate_range(longitudes, 0.5, 1.0, "outside") == 3:5
+
+        # A single point, as NumericalEarth requests for a nearest-neighbour column
+        @test CM.coordinate_range(longitudes, 0.6, 0.6, "inside")  == 4:3
+        @test CM.coordinate_range(longitudes, 0.6, 0.6, "nearest") == 3:3
+
+        # Bounds past the ends are clamped to the available coordinates
+        @test CM.coordinate_range(longitudes, -1.0, 3.0, "outside") == 1:9
+        @test CM.coordinate_range(longitudes, -1.0, 3.0, "nearest") == 1:9
+
+        @test_throws ArgumentError CM.coordinate_range(longitudes, 0.3, 1.1, "strict-inside")
     end
 
     @testset "Zarr: _time_range" begin
@@ -222,6 +248,27 @@ const HAS_CM_CREDENTIALS = !isempty(CM_USERNAME) && !isempty(CM_PASSWORD)
         @test occursin("mdl-arco-geo-025", CM.zarr_url("cmems_mod_glo_phy_my_0.083deg_P1D-m"))
     end
 
+    @testset "subset reads credentials from ENV by default" begin
+        # The module defines its own `get(; kwargs...)`, which must not shadow `Base.get` here
+        mktempdir() do dir
+            touch(joinpath(dir, "existing.nc"))
+            path = CM.subset(dataset_id        = "cmems_mod_glo_phy_my_0.083deg_P1D-m",
+                             variable          = ["thetao"],
+                             output_directory  = dir,
+                             output_filename   = "existing.nc",
+                             minimum_longitude = 3.0,
+                             maximum_longitude = 4.0,
+                             minimum_latitude  = -55.0,
+                             maximum_latitude  = -54.0)
+            @test path == joinpath(dir, "existing.nc")
+        end
+    end
+
+    @testset "Zarr: plane chunk keys" begin
+        @test CM.plane_chunk_key("zos", 3, 4, 1, 2) == "zos/4.1.2"
+        @test CM.plane_chunk_key("deptho", 2, 0, 1, 2) == "deptho/1.2"
+    end
+
     @testset "Zarr download integration test" begin
         # Only run if CMEMS credentials are available
         if HAS_CM_CREDENTIALS
@@ -254,6 +301,33 @@ const HAS_CM_CREDENTIALS = !isempty(CM_USERNAME) && !isempty(CM_PASSWORD)
                 @info "Successfully downloaded Zarr test data" path
             finally
                 rm(out; force=true)
+            end
+
+            # Static datasets are split into parts; deptho lives in the bathymetry part
+            static_out = joinpath(tempdir(), "cmtest_$(getpid())_zarr_static.nc")
+            try
+                path = CM.subset_via_zarr(
+                    dataset_id        = "cmems_mod_glo_phy_my_0.083deg_static",
+                    variable          = ["deptho"],
+                    username          = CM_USERNAME,
+                    password          = CM_PASSWORD,
+                    output_directory  = tempdir(),
+                    output_filename   = basename(static_out),
+                    minimum_longitude = 3.0,
+                    maximum_longitude = 4.0,
+                    minimum_latitude  = -55.0,
+                    maximum_latitude  = -54.0,
+                    skip_existing     = false,
+                )
+                NCDataset(path) do ds
+                    @test dimnames(ds["deptho"]) == ("longitude", "latitude")
+                    deptho = ds["deptho"][:, :]
+                    @test size(deptho) == (ds.dim["longitude"], ds.dim["latitude"])
+                    @test all(d -> ismissing(d) || d > 0, deptho)
+                    @test !all(ismissing, deptho)
+                end
+            finally
+                rm(static_out; force=true)
             end
         else
             @info "Skipping Zarr download test - no CMEMS credentials available"

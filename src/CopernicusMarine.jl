@@ -30,16 +30,16 @@ store by a pure Julia client; output is still written as NetCDF.
 - `minimum_depth`, `maximum_depth` — depth range (m, positive down). `nothing` = full column.
 - `start_datetime`, `end_datetime` — ISO-8601 strings, e.g. `"2020-01-01T00:00:00"`.
 - `skip_existing` — skip download if the output file already exists (default `true`).
-- `coordinates_selection_method` — `"outside"` (default) or `"inside"`.
+- `coordinates_selection_method` — `"outside"` (default), `"inside"` or `"nearest"`.
 """
 function subset(;
     dataset_id::String,
     variable  = nothing,
     variables = nothing,
-    username::String = get(ENV, "COPERNICUS_USERNAME",
-                       get(ENV, "COPERNICUSMARINE_SERVICE_USERNAME", "")),
-    password::String = get(ENV, "COPERNICUS_PASSWORD",
-                       get(ENV, "COPERNICUSMARINE_SERVICE_PASSWORD", "")),
+    username::String = Base.get(ENV, "COPERNICUS_USERNAME",
+                       Base.get(ENV, "COPERNICUSMARINE_SERVICE_USERNAME", "")),
+    password::String = Base.get(ENV, "COPERNICUS_PASSWORD",
+                       Base.get(ENV, "COPERNICUSMARINE_SERVICE_PASSWORD", "")),
     output_directory::String,
     output_filename::String,
     minimum_longitude::Real,
