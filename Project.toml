@@ -1,7 +1,7 @@
 name = "CopernicusMarine"
 uuid = "cd43e856-93a3-40c8-bc9e-6146cdce14fa"
 authors = ["NumericalEarth and contributors"]
-version = "0.2.0"
+version = "0.2.1"
 
 [deps]
 Blosc = "a74b3585-a348-5f62-a45c-50e91977d574"
